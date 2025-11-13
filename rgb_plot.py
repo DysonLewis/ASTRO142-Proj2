@@ -283,7 +283,7 @@ def plot_rgb_with_wcs(rgb_image, wcs, title='HUDF RGB Composite',
         script_dir = os.path.dirname(os.path.abspath(__file__))
         output_path = os.path.join(script_dir, output_file)
         logger.info(f"Saving plot to {output_path}")
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.savefig(output_path, dpi=600, bbox_inches='tight')
         logger.info(f"Plot saved successfully")
     
     return fig, ax
@@ -333,22 +333,27 @@ def map_filters_to_rgb(data_dir='./data'):
     logger.info(f"Found {len(fits_files)} FITS files")
     
     # Define filter mapping
-    filters_needed = ['f850lp', 'f775w', 'f606w', 'f435w']
+    filter_mapping = {
+        'f850lp': '_z_',
+        'f775w': '_i_', 
+        'f606w': '_v_',
+        'f435w': '_b_'
+    }
     
     filter_files = {}
     
-    # Find files for each filter
-    for filt in filters_needed:
-        matching = [f for f in fits_files if filt in f.lower()]
+    # Find files for each filter using letter codes
+    for filt, letter_code in filter_mapping.items():
+        matching = [f for f in fits_files if letter_code in f.lower()]
         if matching:
             filter_files[filt] = os.path.join(data_dir, matching[0])
-            logger.info(f"{filt.upper()}: {matching[0]}")
+            logger.info(f"{filt.upper()} ({letter_code}): {matching[0]}")
         else:
-            raise ValueError(f"Could not find file for filter {filt.upper()}")
+            raise ValueError(f"Could not find file for filter {filt.upper()} (looking for '{letter_code}')")
     
     # Check that we have all four filters
     if len(filter_files) != 4:
-        missing = set(filters_needed) - set(filter_files.keys())
+        missing = set(filter_mapping.keys()) - set(filter_files.keys())
         raise ValueError(f"Could not find files for all filters. Missing: {missing}")
     
     return filter_files
