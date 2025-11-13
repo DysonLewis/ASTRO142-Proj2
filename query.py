@@ -151,7 +151,7 @@ def download_drz_images(base_url='https://archive.stsci.edu/pub/hlsp/udf/acs-wfc
         raise
 
 
-def download_wfc3ir_images(base_url='https://archive.stsci.edu/pub/hlsp/hudf12/hlsp_hudf12_hst_wfc3ir_udfmain/',
+def download_wfc3ir_images(base_url='https://archive.stsci.edu/pub/hlsp/hudf12/',
                            output_dir='./data'):
     """
     Download WFC3-IR imaging data for HUDF.
@@ -181,13 +181,9 @@ def download_wfc3ir_images(base_url='https://archive.stsci.edu/pub/hlsp/hudf12/h
     # Files to download
     wfc3_files = [
         'hlsp_hudf12_hst_wfc3ir_udfmain_f105w_v1.0_drz.fits',
-        'hlsp_hudf12_hst_wfc3ir_udfmain_f105w_v1.0_wht.fits',
         'hlsp_hudf12_hst_wfc3ir_udfmain_f125w_v1.0_drz.fits',
-        'hlsp_hudf12_hst_wfc3ir_udfmain_f125w_v1.0_wht.fits',
         'hlsp_hudf12_hst_wfc3ir_udfmain_f140w_v1.0_drz.fits',
-        'hlsp_hudf12_hst_wfc3ir_udfmain_f140w_v1.0_wht.fits',
         'hlsp_hudf12_hst_wfc3ir_udfmain_f160w_v1.0_drz.fits',
-        'hlsp_hudf12_hst_wfc3ir_udfmain_f160w_v1.0_wht.fits',
     ]
     
     downloaded_files = []
