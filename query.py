@@ -6,6 +6,7 @@ This module provides functionality to:
 - Download _drz_img.fits files from the HLSP UDF archive
 - Download WFC3-IR imaging data
 - Download photometric redshift catalog
+- Download JADES spectroscopic redshift catalog
 """
 
 import os
@@ -265,4 +266,65 @@ def download_photoz_catalog(catalog_url='https://asd.gsfc.nasa.gov/UVUDF/Rafelsk
         
     except requests.RequestException as e:
         logger.error(f"Failed to download catalog: {e}")
+        raise
+
+
+def download_jades_specz_catalog(base_url='https://jades.herts.ac.uk/DR4/',
+                                  filename='Combined_DR4_external_v1.2.1.fits',
+                                  output_dir='./'):
+    """
+    Download JADES spectroscopic redshift catalog (NIRSpec DR4).
+    
+    Parameters
+    ----------
+    base_url : str, optional
+        Base URL of the JADES DR4 archive
+    filename : str, optional
+        Filename of the FITS catalog
+    output_dir : str, optional
+        Directory to save catalog (default: './' - working directory)
+    
+    Returns
+    -------
+    str
+        Path to downloaded catalog file
+    
+    Notes
+    -----
+    This catalog contains spectroscopic redshifts from JADES NIRSpec observations.
+    Extension 1 (Obs_info) contains the main spectroscopic redshift data with
+    columns: RA_TARG, Dec_TARG, z_Spec, z_Spec_flag
+    """
+    logger.info(f"Downloading JADES spectroscopic catalog from {base_url}")
+    
+    # Create output directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = os.path.join(script_dir, output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    output_path = os.path.join(output_dir, filename)
+    
+    # Skip if file already exists
+    if os.path.exists(output_path):
+        logger.info(f"JADES catalog already exists: {filename}")
+        return output_path
+    
+    try:
+        catalog_url = urljoin(base_url, filename)
+        logger.info(f"Downloading from: {catalog_url}")
+        
+        response = requests.get(catalog_url, timeout=120, stream=True)
+        response.raise_for_status()
+        
+        # Write file in chunks
+        with open(output_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        file_size = os.path.getsize(output_path) / (1024 * 1024)  # Size in MB
+        logger.info(f"Successfully downloaded {filename} ({file_size:.2f} MB)")
+        return output_path
+        
+    except requests.RequestException as e:
+        logger.error(f"Failed to download JADES catalog: {e}")
         raise
