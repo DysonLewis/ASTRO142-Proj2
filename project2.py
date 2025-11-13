@@ -6,12 +6,13 @@ Main script to orchestrate HUDF data download and RGB image creation.
 This script:
 1. Downloads HUDF ACS-WFC imaging data from STScI archive
 2. Downloads WFC3-IR imaging data
-3. Downloads photometric redshift catalog
+3. Downloads photometric and spectroscopic redshift catalogs
 4. Creates an RGB composite mosaic with proper filter mapping
-5. Overlays galaxy detections color-coded by redshift
-6. Displays the result with WCS equatorial coordinates
+5. Overlays galaxy detections distinguishing photo-z vs spec-z
+6. Creates photo-z vs spec-z comparison plot
+7. Displays the result with WCS equatorial coordinates
 
-Date: 2025-11-12
+Date: 2025-11-13
 """
 
 import logging
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png',
-         n_galaxies=10):
+         n_galaxies=50, photoz_csv='phot_z.csv', specz_file='Rafelski_UDF_speczlist15.txt'):
     """
     Main function to run the HUDF analysis pipeline.
     
@@ -55,7 +56,11 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
     output_file : str, optional
         Output filename for RGB plot (default: 'hudf_rgb_mosaic.png')
     n_galaxies : int, optional
-        Number of galaxies to overlay on plot (default: 10)
+        Max number of galaxies to overlay from each catalog (default: 50)
+    photoz_csv : str, optional
+        Path to photometric redshift CSV file (default: 'phot_z.csv')
+    specz_file : str, optional
+        Path to spectroscopic redshift file (default: 'Rafelski_UDF_speczlist15.txt')
     
     Raises
     ------
@@ -70,7 +75,7 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
         # Step 1: Get HUDF coordinates
         logger.info("\n[Step 1] Getting HUDF coordinates...")
         hudf_coords = query.get_hudf_coordinates()
-        logger.info(f"HUDF Center: RA={hudf_coords.ra.deg:.6f}Â°, Dec={hudf_coords.dec.deg:.6f}Â°")
+        logger.info(f"HUDF Center: RA={hudf_coords.ra.deg:.6f}°, Dec={hudf_coords.dec.deg:.6f}°")
         
         # Step 2: Download imaging data (if requested)
         if download_data:
@@ -82,12 +87,31 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
             wfc3_files = query.download_wfc3ir_images(output_dir=data_dir)
             logger.info(f"Successfully downloaded {len(wfc3_files)} WFC3-IR FITS files")
             
-            logger.info("\n[Step 2c] Downloading photo-z catalog...")
-            catalog_path = query.download_photoz_catalog(output_dir='./')
-            logger.info(f"Successfully downloaded catalog: {catalog_path}")
+            logger.info("\n[Step 2c] Downloading photometric redshift catalog from NED...")
+            photoz_path = query.download_photoz_catalog_from_ned(
+                output_filename=photoz_csv,
+                output_dir='./'
+            )
+            logger.info(f"Successfully downloaded photo-z catalog: {photoz_path}")
+            
+            logger.info("\n[Step 2d] Downloading spectroscopic redshift catalog...")
+            specz_path = query.download_specz_catalog(output_dir='./')
+            logger.info(f"Successfully downloaded spec-z catalog: {specz_path}")
         else:
             logger.info("\n[Step 2] Skipping download (using existing data)")
-            catalog_path = os.path.join(script_dir, 'Rafelski_UDF_speczlist15.txt')
+            photoz_path = os.path.join(script_dir, photoz_csv)
+            specz_path = os.path.join(script_dir, specz_file)
+        
+        # Verify catalogs exist
+        if not os.path.exists(photoz_path):
+            logger.error(f"Photometric redshift catalog not found: {photoz_path}")
+            logger.error("Please run with download enabled or manually download from:")
+            logger.error("https://ned.ipac.caltech.edu/uri/NED::InRefcode/2006AJ....132..926C")
+            raise FileNotFoundError(f"Missing {photoz_csv}")
+        
+        if not os.path.exists(specz_path):
+            logger.error(f"Spectroscopic redshift catalog not found: {specz_path}")
+            raise FileNotFoundError(f"Missing {specz_file}")
         
         # Step 3: Map filters to RGB channels
         logger.info("\n[Step 3] Mapping all 4 filters (F850LP, F775W, F606W, F435W)...")
@@ -139,29 +163,43 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
             output_file=output_file
         )
         
-        # Step 7: Create version with galaxy overlays
+        # Step 7: Create version with galaxy overlays (photo-z and spec-z)
         logger.info("\n[Step 7] Creating version with galaxy overlays...")
-        logger.info(f"Overlaying {n_galaxies} galaxies from photo-z catalog")
+        logger.info(f"Using photometric catalog: {photoz_csv}")
+        logger.info(f"Using spectroscopic catalog: {specz_file}")
+        logger.info(f"Max galaxies per catalog: {n_galaxies}")
         
         overlay_output = output_file.replace('.png', '_with_galaxies.png')
         
-        fig_gal, ax_gal, cbar = galaxy_overlay.create_galaxy_overlay_plot(
+        fig_gal, ax_gal, cbar, cross_match = galaxy_overlay.create_galaxy_overlay_plot(
             rgb_image,
             f850_wcs,
-            catalog_path=catalog_path,
+            photoz_path=photoz_path,
+            specz_path=specz_path,
             n_galaxies=n_galaxies,
             title='Hubble Ultra Deep Field - Galaxy Detections by Redshift',
             filter_info=filter_info,
             output_file=overlay_output
         )
         
+        # Print cross-match summary
+        logger.info("\n[Cross-match Summary]")
+        logger.info(f"  Matched (have both photo-z and spec-z): {len(cross_match['matched'])}")
+        logger.info(f"  Photo-z only: {len(cross_match['photoz_only'])}")
+        logger.info(f"  Spec-z only: {len(cross_match['specz_only'])}")
+        
         logger.info(f"\n[Complete] RGB mosaic saved to: {output_file}")
         logger.info(f"[Complete] Galaxy overlay version saved to: {overlay_output}")
+        
+        if len(cross_match['matched']) > 0:
+            comparison_file = overlay_output.replace('.png', '_photoz_vs_specz.png')
+            logger.info(f"[Complete] Photo-z vs Spec-z comparison saved to: {comparison_file}")
+        
         logger.info("="*60)
         logger.info("Pipeline completed successfully!")
         logger.info("="*60)
         
-        # # Uncomment to display the plot
+        # Uncomment to display the plot
         # import matplotlib.pyplot as plt
         # plt.show()
         
@@ -179,26 +217,32 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description='HUDF RGB Mosaic Generator with Galaxy Overlays',
+        description='HUDF RGB Mosaic Generator with Photo-z and Spec-z Galaxy Overlays',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Download data and create RGB mosaic with 10 galaxies
+  # Download data and create RGB mosaic with 50 galaxies per catalog
   python project2.py
   
   # Use existing data without downloading
   python project2.py --no-download
   
-  # Overlay 25 galaxies instead of default 10
-  python project2.py --n-galaxies 25
+  # Overlay more galaxies (100 per catalog)
+  python project2.py --n-galaxies 100
   
   # Specify custom output file
   python project2.py --output my_mosaic.png
   
+  # Specify custom catalog files
+  python project2.py --photoz-csv my_photoz.csv --specz-file my_specz.txt
+  
 Output:
-  Creates two files:
+  Creates three files:
   1. Base RGB mosaic (specified by --output)
   2. Version with galaxy overlays (*_with_galaxies.png)
+     - Circles = spectroscopic redshifts
+     - Squares = photometric redshifts only
+  3. Photo-z vs Spec-z comparison plot (*_photoz_vs_specz.png)
         """
     )
     
@@ -225,8 +269,22 @@ Output:
     parser.add_argument(
         '--n-galaxies',
         type=int,
-        default=10,
-        help='Number of galaxies to overlay on plot (default: 10)'
+        default=50,
+        help='Max number of galaxies per catalog to overlay (default: 50)'
+    )
+    
+    parser.add_argument(
+        '--photoz-csv',
+        type=str,
+        default='phot_z.csv',
+        help='Photometric redshift CSV file (default: phot_z.csv)'
+    )
+    
+    parser.add_argument(
+        '--specz-file',
+        type=str,
+        default='Rafelski_UDF_speczlist15.txt',
+        help='Spectroscopic redshift text file (default: Rafelski_UDF_speczlist15.txt)'
     )
     
     args = parser.parse_args()
@@ -236,5 +294,7 @@ Output:
         download_data=not args.no_download,
         data_dir=args.data_dir,
         output_file=args.output,
-        n_galaxies=args.n_galaxies
+        n_galaxies=args.n_galaxies,
+        photoz_csv=args.photoz_csv,
+        specz_file=args.specz_file
     )
