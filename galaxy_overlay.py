@@ -330,7 +330,7 @@ def create_galaxy_overlay_plot(rgb_image, wcs, catalog_path, n_galaxies=10,
         script_dir = os.path.dirname(os.path.abspath(__file__))
         output_path = os.path.join(script_dir, output_file)
         logger.info(f"Saving plot to {output_path}")
-        plt.savefig(output_path, dpi=400, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
         logger.info(f"Plot saved successfully to {output_path}")
     
     return fig, ax, cbar

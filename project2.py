@@ -70,7 +70,7 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
         # Step 1: Get HUDF coordinates
         logger.info("\n[Step 1] Getting HUDF coordinates...")
         hudf_coords = query.get_hudf_coordinates()
-        logger.info(f"HUDF Center: RA={hudf_coords.ra.deg:.6f}°, Dec={hudf_coords.dec.deg:.6f}°")
+        logger.info(f"HUDF Center: RA={hudf_coords.ra.deg:.6f}Â°, Dec={hudf_coords.dec.deg:.6f}Â°")
         
         # Step 2: Download imaging data (if requested)
         if download_data:
