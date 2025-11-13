@@ -2,17 +2,22 @@
 Galaxy overlay module for HUDF analysis.
 
 This module provides functionality to:
-- Load photometric redshift catalogs
+- Load photometric redshift catalogs from CSV
+- Load spectroscopic redshift catalogs from text files
+- Cross-match photometric and spectroscopic samples
 - Overlay galaxy positions on RGB mosaics
-- Color-code galaxies by redshift
+- Color-code galaxies by redshift and distinguish photo-z vs spec-z
+- Create comparison plots of photo-z vs spec-z
 """
 
 import os
 import logging
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from matplotlib.colors import Normalize
+from matplotlib.patches import Circle
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 
@@ -20,248 +25,458 @@ import astropy.units as u
 logger = logging.getLogger(__name__)
 
 
-def load_photoz_catalog(catalog_path, n_galaxies=10, random_sample=True, seed=42):
+def load_photoz_catalog(catalog_path='phot_z.csv', n_galaxies=None):
     """
-    Load photometric redshift catalog and return galaxy data.
+    Load photometric redshift catalog from CSV file.
     
     Parameters
     ----------
-    catalog_path : str
-        Path to the photo-z catalog file
+    catalog_path : str, optional
+        Path to the photo-z CSV file (default: 'phot_z.csv')
     n_galaxies : int, optional
-        Number of galaxies to load (default: 10)
-    random_sample : bool, optional
-        If True, randomly sample galaxies across catalog (default: True)
-    seed : int, optional
-        Random seed for reproducibility (default: 42)
+        Number of galaxies to load (default: None, loads all)
     
     Returns
     -------
-    dict
-        Dictionary with 'ra', 'dec', 'z_phot' arrays
+    pandas.DataFrame
+        DataFrame with 'ra', 'dec', 'z_phot' columns
     
     Raises
     ------
     FileNotFoundError
         If catalog file doesn't exist
     """
-    logger.info(f"Loading photo-z catalog from {catalog_path}")
+    logger.info(f"Loading photometric redshift catalog from {catalog_path}")
     
     if not os.path.exists(catalog_path):
-        raise FileNotFoundError(f"Catalog not found: {catalog_path}")
+        raise FileNotFoundError(f"Photometric catalog not found: {catalog_path}")
     
-    # Read catalog file - load ALL valid galaxies first
+    try:
+        # Read CSV file
+        df = pd.read_csv(catalog_path)
+        logger.info(f"Loaded {len(df)} rows from photometric catalog")
+        
+        # Extract relevant columns
+        # Based on the CSV structure: RA is column 4, Dec is column 5, Redshift is column 6
+        df_clean = pd.DataFrame({
+            'ra': df['RA'],
+            'dec': df['Dec'],
+            'z_phot': df['Redshift (z)'],
+            'object_name': df['Object Name']
+        })
+        
+        # Filter valid redshifts
+        df_clean = df_clean[df_clean['z_phot'] > 0].copy()
+        df_clean = df_clean[df_clean['z_phot'] < 15].copy()
+        
+        # Remove NaN values
+        df_clean = df_clean.dropna(subset=['ra', 'dec', 'z_phot'])
+        
+        logger.info(f"After filtering: {len(df_clean)} galaxies with valid photo-z")
+        
+        if len(df_clean) == 0:
+            raise ValueError("No valid galaxies with photometric redshifts found")
+        
+        if n_galaxies is not None and len(df_clean) > n_galaxies:
+            df_clean = df_clean.head(n_galaxies)
+            logger.info(f"Limited to first {n_galaxies} galaxies")
+        
+        logger.info(f"Photo-z range: {df_clean['z_phot'].min():.3f} to {df_clean['z_phot'].max():.3f}")
+        logger.info(f"RA range: {df_clean['ra'].min():.4f} to {df_clean['ra'].max():.4f}")
+        logger.info(f"Dec range: {df_clean['dec'].min():.4f} to {df_clean['dec'].max():.4f}")
+        
+        return df_clean
+        
+    except Exception as e:
+        logger.error(f"Error reading photometric catalog: {e}")
+        raise
+
+
+def load_specz_catalog(catalog_path, n_galaxies=None):
+    """
+    Load spectroscopic redshift catalog from text file.
+    
+    Parameters
+    ----------
+    catalog_path : str
+        Path to the spec-z catalog file
+    n_galaxies : int, optional
+        Number of galaxies to load (default: None, loads all)
+    
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with 'ra', 'dec', 'z_spec' columns
+    
+    Raises
+    ------
+    FileNotFoundError
+        If catalog file doesn't exist
+    """
+    logger.info(f"Loading spectroscopic redshift catalog from {catalog_path}")
+    
+    if not os.path.exists(catalog_path):
+        raise FileNotFoundError(f"Spectroscopic catalog not found: {catalog_path}")
+    
+    # Read catalog file
     ra_list = []
     dec_list = []
-    z_phot_list = []
+    z_spec_list = []
+    id_list = []
     
     try:
         with open(catalog_path, 'r') as f:
             lines = f.readlines()
-            logger.info(f"Catalog has {len(lines)} total lines")
+            logger.info(f"Spec-z catalog has {len(lines)} total lines")
             
-            data_line_count = 0
             for i, line in enumerate(lines):
-                # Skip comment lines (including ## style comments)
+                # Skip comment lines
                 if line.startswith('#') or line.strip() == '':
                     continue
                 
                 parts = line.split()
                 
-                # Debug: print first few data lines to understand format
-                if data_line_count < 3:
-                    logger.info(f"Data line {data_line_count+1}: {len(parts)} columns - {parts}")
-                
                 if len(parts) >= 4:
                     try:
                         # Format: ID, RA, DEC, zspec, zref
-                        # Columns: 0   1    2     3      4
+                        obj_id = parts[0]
                         ra = float(parts[1])
                         dec = float(parts[2])
-                        zspec = float(parts[3])  # Using spectroscopic redshift
+                        zspec = float(parts[3])
                         
                         # Validate RA/Dec ranges
-                        if not (0 <= ra <= 360):
-                            logger.debug(f"Invalid RA: {ra}")
-                            continue
-                        if not (-90 <= dec <= 90):
-                            logger.debug(f"Invalid Dec: {dec}")
+                        if not (0 <= ra <= 360) or not (-90 <= dec <= 90):
                             continue
                         
-                        # Filter out invalid redshifts
-                        # Using zspec (spectroscopic redshift) which is more accurate
-                        if zspec > 0 and zspec < 15:  # Reasonable z range
+                        # Filter valid redshifts
+                        if zspec > 0 and zspec < 15:
+                            id_list.append(obj_id)
                             ra_list.append(ra)
                             dec_list.append(dec)
-                            z_phot_list.append(zspec)
-                            data_line_count += 1
+                            z_spec_list.append(zspec)
                             
-                            # Don't break early - load ALL galaxies
-                    except (ValueError, IndexError) as e:
-                        logger.debug(f"Error parsing line {i}: {e}")
+                    except (ValueError, IndexError):
                         continue
     
     except Exception as e:
-        logger.error(f"Error reading catalog: {e}")
+        logger.error(f"Error reading spectroscopic catalog: {e}")
         raise
     
     if len(ra_list) == 0:
-        logger.error("No valid galaxies found in catalog!")
-        logger.error("Please check catalog format. Expected: ID RA Dec z_phot ...")
-        raise ValueError("No valid galaxies loaded from catalog")
+        raise ValueError("No valid galaxies loaded from spectroscopic catalog")
     
-    logger.info(f"Loaded {len(ra_list)} total valid galaxies from catalog")
+    logger.info(f"Loaded {len(ra_list)} galaxies from spectroscopic catalog")
     
-    # Convert to numpy arrays
-    ra_array = np.array(ra_list)
-    dec_array = np.array(dec_list)
-    z_array = np.array(z_phot_list)
+    # Create DataFrame
+    df = pd.DataFrame({
+        'id': id_list,
+        'ra': ra_list,
+        'dec': dec_list,
+        'z_spec': z_spec_list
+    })
     
-    # Sample galaxies if we have more than requested
-    if random_sample and len(ra_array) > n_galaxies:
-        logger.info(f"Randomly sampling {n_galaxies} galaxies from {len(ra_array)} total")
-        np.random.seed(seed)
-        indices = np.random.choice(len(ra_array), size=n_galaxies, replace=False)
-        ra_array = ra_array[indices]
-        dec_array = dec_array[indices]
-        z_array = z_array[indices]
+    if n_galaxies is not None and len(df) > n_galaxies:
+        df = df.head(n_galaxies)
+        logger.info(f"Limited to first {n_galaxies} galaxies")
+    
+    logger.info(f"Spec-z range: {df['z_spec'].min():.3f} to {df['z_spec'].max():.3f}")
+    logger.info(f"RA range: {df['ra'].min():.4f} to {df['ra'].max():.4f}")
+    logger.info(f"Dec range: {df['dec'].min():.4f} to {df['dec'].max():.4f}")
+    
+    return df
+
+
+def cross_match_catalogs(photoz_df, specz_df, match_radius_arcsec=1.0):
+    """
+    Cross-match photometric and spectroscopic catalogs by position.
+    
+    Parameters
+    ----------
+    photoz_df : pandas.DataFrame
+        Photometric redshift catalog with 'ra', 'dec', 'z_phot'
+    specz_df : pandas.DataFrame
+        Spectroscopic redshift catalog with 'ra', 'dec', 'z_spec'
+    match_radius_arcsec : float, optional
+        Matching radius in arcseconds (default: 1.0)
+    
+    Returns
+    -------
+    dict
+        Dictionary with:
+        - 'matched': DataFrame with both photo-z and spec-z
+        - 'photoz_only': DataFrame with only photo-z
+        - 'specz_only': DataFrame with only spec-z (no photo-z match)
+    """
+    logger.info(f"Cross-matching catalogs with {match_radius_arcsec}\" radius")
+    
+    # Create SkyCoord objects
+    photoz_coords = SkyCoord(ra=photoz_df['ra'].values*u.degree, 
+                             dec=photoz_df['dec'].values*u.degree)
+    specz_coords = SkyCoord(ra=specz_df['ra'].values*u.degree,
+                           dec=specz_df['dec'].values*u.degree)
+    
+    # Find matches: for each specz source, find closest photoz source
+    idx, d2d, _ = specz_coords.match_to_catalog_sky(photoz_coords)
+    
+    # Keep only matches within the radius
+    match_mask = d2d < match_radius_arcsec*u.arcsec
+    
+    n_matches = match_mask.sum()
+    logger.info(f"Found {n_matches} matches within {match_radius_arcsec}\"")
+    
+    if n_matches > 0:
+        # Create matched catalog
+        matched_specz_indices = np.where(match_mask)[0]
+        matched_photoz_indices = idx[match_mask]
+        
+        matched_data = {
+            'ra': photoz_df.iloc[matched_photoz_indices]['ra'].values,
+            'dec': photoz_df.iloc[matched_photoz_indices]['dec'].values,
+            'z_phot': photoz_df.iloc[matched_photoz_indices]['z_phot'].values,
+            'z_spec': specz_df.iloc[matched_specz_indices]['z_spec'].values,
+            'separation_arcsec': d2d[match_mask].arcsec
+        }
+        matched_df = pd.DataFrame(matched_data)
     else:
-        # Just take first n_galaxies
-        ra_array = ra_array[:n_galaxies]
-        dec_array = dec_array[:n_galaxies]
-        z_array = z_array[:n_galaxies]
+        matched_df = pd.DataFrame(columns=['ra', 'dec', 'z_phot', 'z_spec', 'separation_arcsec'])
     
-    logger.info(f"Using {len(ra_array)} galaxies for overlay")
-    logger.info(f"RA range: {min(ra_array):.4f} to {max(ra_array):.4f}")
-    logger.info(f"Dec range: {min(dec_array):.4f} to {max(dec_array):.4f}")
-    logger.info(f"Redshift range: {min(z_array):.3f} to {max(z_array):.3f}")
+    # Identify photo-z only sources (not matched to any spec-z)
+    matched_photoz_set = set(idx[match_mask]) if n_matches > 0 else set()
+    photoz_only_mask = ~photoz_df.index.isin(matched_photoz_set)
+    photoz_only_df = photoz_df[photoz_only_mask].copy()
+    
+    # Identify spec-z only sources (not matched to photo-z)
+    specz_only_mask = ~match_mask
+    specz_only_df = specz_df[specz_only_mask].copy()
+    
+    logger.info(f"Matched sources (have both photo-z and spec-z): {len(matched_df)}")
+    logger.info(f"Photo-z only: {len(photoz_only_df)}")
+    logger.info(f"Spec-z only (no photo-z match): {len(specz_only_df)}")
     
     return {
-        'ra': ra_array,
-        'dec': dec_array,
-        'z_phot': z_array
+        'matched': matched_df,
+        'photoz_only': photoz_only_df,
+        'specz_only': specz_only_df
     }
 
 
-def overlay_galaxies(ax, wcs, galaxy_data, cmap_name='plasma', 
-                     marker_size=200, show_labels=True, label_fontsize=8,
-                     circle_linewidth=2):
+def overlay_galaxies_by_type(ax, wcs, matched_df, photoz_only_df, specz_only_df=None,
+                             cmap_name='plasma', marker_size=150, show_labels=False):
     """
-    Overlay galaxy positions on an existing plot with WCS axes.
+    Overlay galaxies with different markers for photo-z vs spec-z.
     
     Parameters
     ----------
     ax : matplotlib.axes.Axes
-        Axes object with WCS projection to plot on
+        Axes object with WCS projection
     wcs : astropy.wcs.WCS
         WCS object for coordinate transformation
-    galaxy_data : dict
-        Dictionary with 'ra', 'dec', 'z_phot' arrays
+    matched_df : pandas.DataFrame
+        Galaxies with both photo-z and spec-z (use spec-z for plotting)
+    photoz_only_df : pandas.DataFrame
+        Galaxies with only photo-z
+    specz_only_df : pandas.DataFrame, optional
+        Galaxies with only spec-z (no photo-z counterpart)
     cmap_name : str, optional
-        Name of matplotlib colormap (default: 'plasma')
+        Colormap name (default: 'plasma')
     marker_size : float, optional
-        Size of galaxy markers in pixels (default: 200)
+        Marker size (default: 150)
     show_labels : bool, optional
-        Whether to show redshift labels (default: True)
-    label_fontsize : int, optional
-        Font size for labels (default: 8)
-    circle_linewidth : float, optional
-        Line width for circle markers (default: 2)
+        Show redshift labels (default: False)
     
     Returns
     -------
     matplotlib.colorbar.Colorbar
-        Colorbar object for the redshift scale
-    
-    Raises
-    ------
-    ValueError
-        If galaxy_data is empty or invalid
+        Colorbar object
     """
-    if len(galaxy_data['ra']) == 0:
-        raise ValueError("No galaxies to overlay")
-    
-    logger.info(f"Overlaying {len(galaxy_data['ra'])} galaxies")
-    
     # Get image bounds
     ny, nx = wcs.array_shape
-    logger.info(f"Image shape: {nx} x {ny} pixels")
     
-    # Create colormap for redshifts
-    norm = Normalize(vmin=galaxy_data['z_phot'].min(), 
-                   vmax=galaxy_data['z_phot'].max())
+    # Combine all redshifts to get global color scale
+    all_z = []
+    if len(matched_df) > 0:
+        all_z.extend(matched_df['z_spec'].values)
+    if len(photoz_only_df) > 0:
+        all_z.extend(photoz_only_df['z_phot'].values)
+    if specz_only_df is not None and len(specz_only_df) > 0:
+        all_z.extend(specz_only_df['z_spec'].values)
+    
+    if len(all_z) == 0:
+        logger.warning("No galaxies to plot")
+        return None
+    
+    norm = Normalize(vmin=min(all_z), vmax=max(all_z))
     cmap = cm.get_cmap(cmap_name)
     
-    # Track how many galaxies are actually plotted
-    plotted_count = 0
+    plotted = {'matched': 0, 'photoz_only': 0, 'specz_only': 0}
     
-    # Plot each galaxy
-    for i, (ra, dec, z) in enumerate(zip(galaxy_data['ra'], 
-                                         galaxy_data['dec'], 
-                                         galaxy_data['z_phot'])):
+    # Plot matched sources (have spec-z) - use CIRCLES
+    logger.info(f"Plotting {len(matched_df)} matched sources (circles)")
+    for idx, row in matched_df.iterrows():
         try:
-            # Convert to pixel coordinates
-            coord = SkyCoord(ra=ra*u.degree, dec=dec*u.degree, frame='icrs')
+            coord = SkyCoord(ra=row['ra']*u.degree, dec=row['dec']*u.degree, frame='icrs')
             x, y = wcs.world_to_pixel(coord)
             
-            # Check if galaxy is within image bounds
             if 0 <= x < nx and 0 <= y < ny:
-                color = cmap(norm(z))
+                color = cmap(norm(row['z_spec']))
+                ax.plot(x, y, 'o', color='none', markeredgecolor=color,
+                       markeredgewidth=2, markersize=marker_size**0.5,
+                       alpha=0.9, zorder=10)
                 
-                # Plot HOLLOW circle marker (not filled)
-                ax.plot(x, y, 'o', 
-                       color='none',  # No fill
-                       markeredgecolor=color, 
-                       markeredgewidth=circle_linewidth,
-                       markersize=marker_size**0.5, 
-                       alpha=0.9, 
-                       zorder=10)
-                
-                # Add redshift label if requested
                 if show_labels:
-                    # Position label outside the circle
-                    label_offset = (marker_size**0.5) * 0.7
-                    ax.text(x+label_offset, y+label_offset, f'z={z:.2f}', 
-                           color='white', 
-                           fontsize=label_fontsize,
+                    ax.text(x+5, y+5, f"s:{row['z_spec']:.2f}",
+                           color='white', fontsize=7,
                            bbox=dict(boxstyle='round,pad=0.3', 
                                    facecolor='black', alpha=0.7),
                            zorder=11)
-                
-                plotted_count += 1
-                logger.debug(f"Galaxy {i+1}: RA={ra:.4f}, Dec={dec:.4f}, "
-                           f"z={z:.3f} -> pixel ({x:.1f}, {y:.1f})")
-            else:
-                logger.debug(f"Galaxy {i+1} outside image bounds: "
-                           f"pixel ({x:.1f}, {y:.1f})")
-                
+                plotted['matched'] += 1
         except Exception as e:
-            logger.warning(f"Error plotting galaxy {i+1}: {e}")
+            logger.debug(f"Error plotting matched galaxy: {e}")
             continue
     
-    logger.info(f"Successfully plotted {plotted_count} out of "
-               f"{len(galaxy_data['ra'])} galaxies")
+    # Plot photo-z only sources - use SQUARES
+    logger.info(f"Plotting {len(photoz_only_df)} photo-z only sources (squares)")
+    for idx, row in photoz_only_df.iterrows():
+        try:
+            coord = SkyCoord(ra=row['ra']*u.degree, dec=row['dec']*u.degree, frame='icrs')
+            x, y = wcs.world_to_pixel(coord)
+            
+            if 0 <= x < nx and 0 <= y < ny:
+                color = cmap(norm(row['z_phot']))
+                ax.plot(x, y, 's', color='none', markeredgecolor=color,
+                       markeredgewidth=2, markersize=marker_size**0.5,
+                       alpha=0.9, zorder=10)
+                
+                if show_labels:
+                    ax.text(x+5, y+5, f"p:{row['z_phot']:.2f}",
+                           color='white', fontsize=7,
+                           bbox=dict(boxstyle='round,pad=0.3', 
+                                   facecolor='blue', alpha=0.7),
+                           zorder=11)
+                plotted['photoz_only'] += 1
+        except Exception as e:
+            logger.debug(f"Error plotting photo-z galaxy: {e}")
+            continue
     
-    if plotted_count == 0:
-        logger.warning("WARNING: No galaxies were within the image boundaries!")
-        logger.warning("This might indicate a coordinate mismatch or catalog issue.")
+    # Plot spec-z only sources (no photo-z) - use TRIANGLES if provided
+    if specz_only_df is not None and len(specz_only_df) > 0:
+        logger.info(f"Plotting {len(specz_only_df)} spec-z only sources (triangles)")
+        for idx, row in specz_only_df.iterrows():
+            try:
+                coord = SkyCoord(ra=row['ra']*u.degree, dec=row['dec']*u.degree, frame='icrs')
+                x, y = wcs.world_to_pixel(coord)
+                
+                if 0 <= x < nx and 0 <= y < ny:
+                    color = cmap(norm(row['z_spec']))
+                    ax.plot(x, y, '^', color='none', markeredgecolor=color,
+                           markeredgewidth=2, markersize=marker_size**0.5,
+                           alpha=0.9, zorder=10)
+                    plotted['specz_only'] += 1
+            except Exception as e:
+                logger.debug(f"Error plotting spec-z only galaxy: {e}")
+                continue
+    
+    logger.info(f"Successfully plotted: {plotted['matched']} matched, "
+               f"{plotted['photoz_only']} photo-z only, {plotted['specz_only']} spec-z only")
     
     # Add colorbar
     sm = cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=ax, pad=0.02, fraction=0.046)
-    cbar.set_label('Photometric Redshift (z)', fontsize=11)
+    cbar.set_label('Redshift (z)', fontsize=11)
     
-    logger.info("Galaxy overlays completed")
+    # Add legend
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w', markeredgecolor='gray',
+               markeredgewidth=2, markersize=8, label='Spectroscopic z'),
+        Line2D([0], [0], marker='s', color='w', markeredgecolor='gray',
+               markeredgewidth=2, markersize=8, label='Photometric z only')
+    ]
+    ax.legend(handles=legend_elements, loc='lower right', fontsize=10,
+             framealpha=0.9)
     
     return cbar
 
 
-def create_galaxy_overlay_plot(rgb_image, wcs, catalog_path, n_galaxies=10,
-                               title='HUDF with Galaxy Detections',
+def plot_photoz_vs_specz(matched_df, output_file=None):
+    """
+    Create scatter plot comparing photometric vs spectroscopic redshifts.
+    
+    Parameters
+    ----------
+    matched_df : pandas.DataFrame
+        DataFrame with 'z_phot' and 'z_spec' columns
+    output_file : str, optional
+        Output filename for saving plot
+    
+    Returns
+    -------
+    tuple
+        (fig, ax) matplotlib figure and axes
+    """
+    logger.info(f"Creating photo-z vs spec-z comparison plot ({len(matched_df)} sources)")
+    
+    if len(matched_df) == 0:
+        logger.warning("No matched sources for comparison plot")
+        return None, None
+    
+    fig, ax = plt.subplots(figsize=(10, 10))
+    
+    z_phot = matched_df['z_phot'].values
+    z_spec = matched_df['z_spec'].values
+    
+    # Scatter plot
+    ax.scatter(z_spec, z_phot, alpha=0.6, s=50, c='blue', edgecolors='black', linewidths=0.5)
+    
+    # Add 1:1 line
+    z_range = [min(z_spec.min(), z_phot.min()), max(z_spec.max(), z_phot.max())]
+    ax.plot(z_range, z_range, 'k--', linewidth=2, label='1:1 line')
+    
+    # Calculate statistics
+    residuals = z_phot - z_spec
+    bias = np.mean(residuals)
+    scatter = np.std(residuals)
+    nmad = 1.48 * np.median(np.abs(residuals - np.median(residuals)))
+    
+    # Add statistics text
+    stats_text = f"N = {len(matched_df)}\n"
+    stats_text += f"Bias = {bias:.4f}\n"
+    stats_text += f"σ = {scatter:.4f}\n"
+    stats_text += f"NMAD = {nmad:.4f}"
+    
+    ax.text(0.05, 0.95, stats_text, transform=ax.transAxes,
+           fontsize=12, verticalalignment='top',
+           bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    ax.set_xlabel('Spectroscopic Redshift (z_spec)', fontsize=14)
+    ax.set_ylabel('Photometric Redshift (z_phot)', fontsize=14)
+    ax.set_title('Photometric vs Spectroscopic Redshift Comparison', fontsize=16)
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=12)
+    
+    # Equal aspect ratio
+    ax.set_aspect('equal', adjustable='box')
+    
+    plt.tight_layout()
+    
+    if output_file:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        output_path = os.path.join(script_dir, output_file)
+        logger.info(f"Saving comparison plot to {output_path}")
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        logger.info("Comparison plot saved successfully")
+    
+    return fig, ax
+
+
+def create_galaxy_overlay_plot(rgb_image, wcs, photoz_path='phot_z.csv', 
+                               specz_path='Rafelski_UDF_speczlist15.txt',
+                               n_galaxies=50, title='HUDF with Galaxy Detections',
                                filter_info=None, output_file=None):
     """
     Create a complete plot with RGB image and galaxy overlays.
+    Distinguishes between photometric and spectroscopic redshifts.
     
     Parameters
     ----------
@@ -269,10 +484,12 @@ def create_galaxy_overlay_plot(rgb_image, wcs, catalog_path, n_galaxies=10,
         RGB image array with shape (height, width, 3)
     wcs : astropy.wcs.WCS
         WCS object for coordinate transformation
-    catalog_path : str
-        Path to photo-z catalog file
+    photoz_path : str, optional
+        Path to photo-z catalog file (default: 'phot_z.csv')
+    specz_path : str, optional
+        Path to spec-z catalog file (default: 'Rafelski_UDF_speczlist15.txt')
     n_galaxies : int, optional
-        Number of galaxies to overlay (default: 10)
+        Max number of galaxies to overlay from each catalog (default: 50)
     title : str, optional
         Plot title (default: 'HUDF with Galaxy Detections')
     filter_info : dict, optional
@@ -283,9 +500,21 @@ def create_galaxy_overlay_plot(rgb_image, wcs, catalog_path, n_galaxies=10,
     Returns
     -------
     tuple
-        (fig, ax, cbar) matplotlib figure, axes, and colorbar objects
+        (fig, ax, cbar, cross_match_results) matplotlib figure, axes, 
+        colorbar objects, and cross-match dictionary
     """
-    logger.info("Creating galaxy overlay plot")
+    logger.info("Creating galaxy overlay plot with photo-z and spec-z distinction")
+    
+    # Load both catalogs
+    try:
+        photoz_df = load_photoz_catalog(photoz_path, n_galaxies=n_galaxies)
+        specz_df = load_specz_catalog(specz_path, n_galaxies=n_galaxies)
+    except Exception as e:
+        logger.error(f"Failed to load catalogs: {e}")
+        raise
+    
+    # Cross-match catalogs
+    cross_match = cross_match_catalogs(photoz_df, specz_df, match_radius_arcsec=1.0)
     
     # Create figure with WCS projection
     fig = plt.figure(figsize=(14, 12))
@@ -315,13 +544,13 @@ def create_galaxy_overlay_plot(rgb_image, wcs, catalog_path, n_galaxies=10,
                fontsize=10, verticalalignment='top',
                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
     
-    # Load and overlay galaxies
-    try:
-        galaxy_data = load_photoz_catalog(catalog_path, n_galaxies=n_galaxies)
-        cbar = overlay_galaxies(ax, wcs, galaxy_data)
-    except Exception as e:
-        logger.error(f"Failed to overlay galaxies: {e}")
-        raise
+    # Overlay galaxies
+    cbar = overlay_galaxies_by_type(
+        ax, wcs,
+        cross_match['matched'],
+        cross_match['photoz_only'],
+        cross_match['specz_only']
+    )
     
     plt.tight_layout()
     
@@ -333,4 +562,9 @@ def create_galaxy_overlay_plot(rgb_image, wcs, catalog_path, n_galaxies=10,
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         logger.info(f"Plot saved successfully to {output_path}")
     
-    return fig, ax, cbar
+    # Create photo-z vs spec-z comparison plot
+    if len(cross_match['matched']) > 0:
+        comparison_file = output_file.replace('.png', '_photoz_vs_specz.png') if output_file else None
+        plot_photoz_vs_specz(cross_match['matched'], output_file=comparison_file)
+    
+    return fig, ax, cbar, cross_match
