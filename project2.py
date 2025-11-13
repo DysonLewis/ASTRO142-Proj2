@@ -102,11 +102,13 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
         logger.info("Color scaling: Using percentile method (1-99.5th percentile)")
         logger.info("Stretch function: Asinh stretch for enhanced dynamic range")
         
+        # The percentiles are chosen arbitrarily, I think they produced a nice looking image 
+        # (Without spending 5 hours testing values)
         rgb_image = rgb_plot.create_rgb_image(
             red_data, green_data, blue_data,
-            red_scale=(1, 99.5),
-            green_scale=(1, 99.5),
-            blue_scale=(1, 99.5),
+            red_scale=(80, 99.95),
+            green_scale=(80, 99.95),
+            blue_scale=(80, 99.95),
             stretch='asinh'
         )
         
@@ -125,9 +127,9 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
         logger.info("Pipeline completed successfully!")
         logger.info("="*60)
         
-        # Display the plot
-        import matplotlib.pyplot as plt
-        plt.show()
+        # # Display the plot
+        # import matplotlib.pyplot as plt
+        # plt.show()
         
     except FileNotFoundError as e:
         logger.error(f"File not found: {e}")

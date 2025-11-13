@@ -262,7 +262,7 @@ def plot_rgb_with_wcs(rgb_image, wcs, title='HUDF RGB Composite',
         script_dir = os.path.dirname(os.path.abspath(__file__))
         output_path = os.path.join(script_dir, output_file)
         logger.info(f"Saving plot to {output_path}")
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.savefig(output_path, dpi=600, bbox_inches='tight')
         logger.info(f"Plot saved successfully")
     
     return fig, ax
