@@ -4,6 +4,8 @@ Query and download Hubble Ultra Deep Field (HUDF) data from STScI archive.
 This module provides functionality to:
 - Get HUDF coordinates using SkyCoord
 - Download _drz_img.fits files from the HLSP UDF archive
+- Download WFC3-IR imaging data
+- Download photometric redshift catalog
 """
 
 import os
@@ -146,4 +148,125 @@ def download_drz_images(base_url='https://archive.stsci.edu/pub/hlsp/udf/acs-wfc
         
     except requests.RequestException as e:
         logger.error(f"Error accessing archive: {e}")
+        raise
+
+
+def download_wfc3ir_images(base_url='https://archive.stsci.edu/pub/hlsp/hudf12/hlsp_hudf12_hst_wfc3ir_udfmain/',
+                           output_dir='./data'):
+    """
+    Download WFC3-IR imaging data for HUDF.
+    
+    Parameters
+    ----------
+    base_url : str, optional
+        Base URL of the WFC3-IR archive
+    output_dir : str, optional
+        Directory to save downloaded files (default: './data')
+    
+    Returns
+    -------
+    list of str
+        List of downloaded file paths
+    """
+    if not isinstance(output_dir, str):
+        raise TypeError(f"output_dir must be a string, got {type(output_dir)}")
+    
+    logger.info(f"Starting WFC3-IR download from {base_url}")
+    
+    # Create output directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = os.path.join(script_dir, output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Files to download
+    wfc3_files = [
+        'hlsp_hudf12_hst_wfc3ir_udfmain_f105w_v1.0_drz.fits',
+        'hlsp_hudf12_hst_wfc3ir_udfmain_f105w_v1.0_wht.fits',
+        'hlsp_hudf12_hst_wfc3ir_udfmain_f125w_v1.0_drz.fits',
+        'hlsp_hudf12_hst_wfc3ir_udfmain_f125w_v1.0_wht.fits',
+        'hlsp_hudf12_hst_wfc3ir_udfmain_f140w_v1.0_drz.fits',
+        'hlsp_hudf12_hst_wfc3ir_udfmain_f140w_v1.0_wht.fits',
+        'hlsp_hudf12_hst_wfc3ir_udfmain_f160w_v1.0_drz.fits',
+        'hlsp_hudf12_hst_wfc3ir_udfmain_f160w_v1.0_wht.fits',
+    ]
+    
+    downloaded_files = []
+    
+    for filename in wfc3_files:
+        file_url = urljoin(base_url, filename)
+        output_path = os.path.join(output_dir, filename)
+        
+        # Skip if file already exists
+        if os.path.exists(output_path):
+            logger.info(f"File already exists, skipping: {filename}")
+            downloaded_files.append(output_path)
+            continue
+        
+        logger.info(f"Downloading {filename}...")
+        
+        try:
+            file_response = requests.get(file_url, timeout=120, stream=True)
+            file_response.raise_for_status()
+            
+            # Write file in chunks
+            with open(output_path, 'wb') as f:
+                for chunk in file_response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            file_size = os.path.getsize(output_path) / (1024 * 1024)  # Size in MB
+            logger.info(f"Successfully downloaded {filename} ({file_size:.2f} MB)")
+            downloaded_files.append(output_path)
+            
+        except requests.RequestException as e:
+            logger.error(f"Failed to download {filename}: {e}")
+            continue
+    
+    logger.info(f"WFC3-IR download complete. {len(downloaded_files)} files downloaded.")
+    return downloaded_files
+
+
+def download_photoz_catalog(catalog_url='https://asd.gsfc.nasa.gov/UVUDF/Rafelski_UDF_speczlist15.txt',
+                            output_dir='./'):
+    """
+    Download photometric redshift catalog for HUDF.
+    
+    Parameters
+    ----------
+    catalog_url : str
+        URL of the photo-z catalog
+    output_dir : str, optional
+        Directory to save catalog (default: './' - working directory)
+    
+    Returns
+    -------
+    str
+        Path to downloaded catalog file
+    """
+    logger.info(f"Downloading photo-z catalog from {catalog_url}")
+    
+    # Create output directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_dir = os.path.join(script_dir, output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    filename = os.path.basename(catalog_url)
+    output_path = os.path.join(output_dir, filename)
+    
+    # Skip if file already exists
+    if os.path.exists(output_path):
+        logger.info(f"Catalog already exists: {filename}")
+        return output_path
+    
+    try:
+        response = requests.get(catalog_url, timeout=30)
+        response.raise_for_status()
+        
+        with open(output_path, 'w') as f:
+            f.write(response.text)
+        
+        logger.info(f"Successfully downloaded catalog: {filename}")
+        return output_path
+        
+    except requests.RequestException as e:
+        logger.error(f"Failed to download catalog: {e}")
         raise
