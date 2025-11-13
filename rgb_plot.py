@@ -3,7 +3,8 @@ Create RGB composite images from HUDF ACS-WFC filter data.
 
 This module provides functionality to:
 - Load FITS images with WCS information
-- Map filter bandpasses to RGB channels
+- Map all 4 filter bandpasses (F850LP, F775W, F606W, F435W)
+- Combine F850LP + F775W for red channel
 - Apply color scaling using histogram/percentile methods
 - Generate RGB composite images with equatorial coordinate axes
 """
@@ -15,6 +16,8 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.visualization import MinMaxInterval, AsinhStretch, ImageNormalize
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -123,20 +126,25 @@ def scale_image_percentile(data, lower_percentile=1, upper_percentile=99.5):
     return scaled
 
 
-def create_rgb_image(red_data, green_data, blue_data, 
+def create_rgb_image(f850_data, f775_data, f606_data, f435_data,
                      red_scale=(1, 99.5), green_scale=(1, 99.5), blue_scale=(1, 99.5),
                      stretch='asinh'):
     """
-    Create an RGB composite image from three filter bands.
+    Create an RGB composite image from four filter bands.
+    
+    This function combines F850LP and F775W for red, F606W for green,
+    and F435W for blue to create a full-color composite.
     
     Parameters
     ----------
-    red_data : numpy.ndarray
-        Data for red channel
-    green_data : numpy.ndarray
-        Data for green channel
-    blue_data : numpy.ndarray
-        Data for blue channel
+    f850_data : numpy.ndarray
+        Data for F850LP filter (I-band, ~850nm)
+    f775_data : numpy.ndarray
+        Data for F775W filter (I-band, ~775nm)
+    f606_data : numpy.ndarray
+        Data for F606W filter (V-band, ~606nm)
+    f435_data : numpy.ndarray
+        Data for F435W filter (B-band, ~435nm)
     red_scale : tuple, optional
         (lower, upper) percentiles for red channel (default: (1, 99.5))
     green_scale : tuple, optional
@@ -157,17 +165,22 @@ def create_rgb_image(red_data, green_data, blue_data,
         If input arrays have different shapes or invalid parameters
     """
     # Input validation
-    if not all(isinstance(d, np.ndarray) for d in [red_data, green_data, blue_data]):
-        raise TypeError("All channel data must be numpy arrays")
+    if not all(isinstance(d, np.ndarray) for d in [f850_data, f775_data, f606_data, f435_data]):
+        raise TypeError("All filter data must be numpy arrays")
     
-    if not (red_data.shape == green_data.shape == blue_data.shape):
-        raise ValueError(f"Channel shapes must match: R={red_data.shape}, "
-                        f"G={green_data.shape}, B={blue_data.shape}")
+    if not (f850_data.shape == f775_data.shape == f606_data.shape == f435_data.shape):
+        raise ValueError(f"Filter shapes must match: F850={f850_data.shape}, "
+                        f"F775={f775_data.shape}, F606={f606_data.shape}, F435={f435_data.shape}")
     
     if stretch not in ['asinh', 'linear', 'sqrt']:
         raise ValueError(f"Invalid stretch: {stretch}. Must be 'asinh', 'linear', or 'sqrt'")
     
-    logger.info(f"Creating RGB image with {stretch} stretch")
+    logger.info(f"Creating RGB image from 4 filters with {stretch} stretch")
+    
+    # Combine F850LP and F775W for red channel (average or weighted combination)
+    red_data = (f850_data + f775_data) / 2.0
+    green_data = f606_data
+    blue_data = f435_data
     
     # Scale each channel
     red_scaled = scale_image_percentile(red_data, red_scale[0], red_scale[1])
@@ -192,6 +205,9 @@ def create_rgb_image(red_data, green_data, blue_data,
     return rgb
 
 
+
+
+
 def plot_rgb_with_wcs(rgb_image, wcs, title='HUDF RGB Composite', 
                       filter_info=None, output_file=None):
     """
@@ -206,9 +222,14 @@ def plot_rgb_with_wcs(rgb_image, wcs, title='HUDF RGB Composite',
     title : str, optional
         Plot title (default: 'HUDF RGB Composite')
     filter_info : dict, optional
-        Dictionary with 'red', 'green', 'blue' keys containing filter names
+        Dictionary with filter information for display
     output_file : str, optional
         If provided, save plot to this file
+    
+    Returns
+    -------
+    tuple
+        (fig, ax) matplotlib figure and axes objects
     
     Raises
     ------
@@ -227,7 +248,7 @@ def plot_rgb_with_wcs(rgb_image, wcs, title='HUDF RGB Composite',
     logger.info("Plotting RGB image with WCS coordinates")
     
     # Create figure with WCS projection
-    fig = plt.figure(figsize=(12, 10))
+    fig = plt.figure(figsize=(14, 12))
     ax = fig.add_subplot(111, projection=wcs)
     
     # Display RGB image
@@ -262,7 +283,7 @@ def plot_rgb_with_wcs(rgb_image, wcs, title='HUDF RGB Composite',
         script_dir = os.path.dirname(os.path.abspath(__file__))
         output_path = os.path.join(script_dir, output_file)
         logger.info(f"Saving plot to {output_path}")
-        plt.savefig(output_path, dpi=600, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
         logger.info(f"Plot saved successfully")
     
     return fig, ax
@@ -280,17 +301,16 @@ def map_filters_to_rgb(data_dir='./data'):
     Returns
     -------
     dict
-        Dictionary with 'red', 'green', 'blue' keys mapping to file paths
+        Dictionary with 'f850lp', 'f775w', 'f606w', 'f435w' keys mapping to file paths
     
     Notes
     -----
-    Standard mapping for HUDF ACS-WFC filters:
-    - Red:   F850LP (I-band, ~850nm) 
-    - Green: F606W (V-band, ~606nm)
-    - Blue:  F435W (B-band, ~435nm)
+    Mapping for HUDF ACS-WFC filters:
+    - F850LP (I-band, ~850nm) + F775W (I-band, ~775nm) -> Red channel
+    - F606W (V-band, ~606nm) -> Green channel
+    - F435W (B-band, ~435nm) -> Blue channel
     
-    Files are identified by band designation in filename:
-    '_b_' for blue, '_v_' for green/visual, '_i_' for red/infrared or F475W (g-band, ~475nm)
+    All four filters are loaded and used to create the RGB composite.
     """
     if not isinstance(data_dir, str):
         raise TypeError(f"data_dir must be a string, got {type(data_dir)}")
@@ -313,30 +333,22 @@ def map_filters_to_rgb(data_dir='./data'):
     logger.info(f"Found {len(fits_files)} FITS files")
     
     # Define filter mapping
-    # HUDF ACS-WFC filters:
-    # Red: F850LP (I-band, ~850nm)
-    # Green: F606W (V-band, ~606nm)
-    # Blue: F435W (B-band, ~435nm)
-    filter_map = {
-        'red': ['f850lp', '_i_'],
-        'green': ['f606w', '_v_'],
-        'blue': ['f435w', '_b_']
-    }
+    filters_needed = ['f850lp', 'f775w', 'f606w', 'f435w']
     
-    rgb_files = {}
+    filter_files = {}
     
-    # Find files for each channel
-    for channel, filters in filter_map.items():
-        for filt in filters:
-            matching = [f for f in fits_files if filt in f.lower()]
-            if matching:
-                rgb_files[channel] = os.path.join(data_dir, matching[0])
-                logger.info(f"{channel.upper()} channel: {matching[0]} (filter: {filt.upper()})")
-                break
+    # Find files for each filter
+    for filt in filters_needed:
+        matching = [f for f in fits_files if filt in f.lower()]
+        if matching:
+            filter_files[filt] = os.path.join(data_dir, matching[0])
+            logger.info(f"{filt.upper()}: {matching[0]}")
+        else:
+            raise ValueError(f"Could not find file for filter {filt.upper()}")
     
-    # Check that we have all three channels
-    if len(rgb_files) != 3:
-        missing = set(['red', 'green', 'blue']) - set(rgb_files.keys())
-        raise ValueError(f"Could not find files for all RGB channels. Missing: {missing}")
+    # Check that we have all four filters
+    if len(filter_files) != 4:
+        missing = set(filters_needed) - set(filter_files.keys())
+        raise ValueError(f"Could not find files for all filters. Missing: {missing}")
     
-    return rgb_files
+    return filter_files
