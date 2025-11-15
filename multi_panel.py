@@ -8,8 +8,6 @@ This module creates a multi-panel figure showing:
 - Labels for each panel (a, b, c, d, e, f)
 
 Subregions highlight interesting galaxies with different redshift properties.
-
-NOTE: This module is designed to be imported only. It does not run standalone.
 """
 
 import os
@@ -35,9 +33,10 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
     Find interesting galaxies to zoom in on.
     
     Strategy:
-    - 4 regions: galaxies with both photo-z and spec-z (matched)
-    - 1 region: high-z photo-z only galaxy
-    - 1 region: high-z spec-z only galaxy
+    - Region 1: ID 20388 (specific galaxy at RA=53.1631779, Dec=-27.8123974)
+    - Regions 2-4: galaxies with both photo-z and spec-z (matched) at different redshifts
+    - Region 5: highest-z photo-z only galaxy
+    - Region 6: highest-z spec-z only galaxy
     
     Parameters
     ----------
@@ -61,6 +60,7 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
         - 'z': Redshift value
         - 'type': 'matched', 'photoz_only', or 'specz_only'
         - 'label': Description
+        - 'id': Galaxy ID (if available)
     """
     logger.info(f"Finding {n_regions} interesting galaxies for zoom regions")
     
@@ -73,24 +73,96 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
         x, y = wcs.world_to_pixel(coord)
         return (margin <= x < nx-margin) and (margin <= y < ny-margin)
     
-    # 1-4: Find 4 matched galaxies with different redshifts
+    # Region 1: Search for specific galaxy ID 20388
+    logger.info("Searching for galaxy ID 20388...")
+    target_ra = 53.1631779
+    target_dec = -27.8123974
+    
+    # Search in all catalogs for this galaxy
+    found_target = False
+    
+    # First check if it's in matched catalog
     matched_df = cross_match['matched']
     if len(matched_df) > 0:
-        # Filter to galaxies within image bounds
+        # Find closest match to target coordinates (within 1 arcsec)
+        target_coord = SkyCoord(ra=target_ra*u.degree, dec=target_dec*u.degree, frame='icrs')
+        for idx, row in matched_df.iterrows():
+            gal_coord = SkyCoord(ra=row['ra']*u.degree, dec=row['dec']*u.degree, frame='icrs')
+            sep = target_coord.separation(gal_coord).arcsec
+            if sep < 1.0 and is_in_bounds(row['ra'], row['dec']):
+                regions.append({
+                    'ra': row['ra'],
+                    'dec': row['dec'],
+                    'z': row['z_spec'],
+                    'z_phot': row['z_phot'],
+                    'type': 'matched',
+                    'label': f"ID 20388: z_spec={row['z_spec']:.3f}, z_phot={row['z_phot']:.3f}",
+                    'id': '20388'
+                })
+                logger.info(f"Region 1: Found ID 20388 in matched catalog at z_spec={row['z_spec']:.3f}")
+                found_target = True
+                break
+    
+    # If not in matched, check photo-z only
+    if not found_target:
+        photoz_only_df = cross_match['photoz_only']
+        if len(photoz_only_df) > 0:
+            target_coord = SkyCoord(ra=target_ra*u.degree, dec=target_dec*u.degree, frame='icrs')
+            for idx, row in photoz_only_df.iterrows():
+                gal_coord = SkyCoord(ra=row['ra']*u.degree, dec=row['dec']*u.degree, frame='icrs')
+                sep = target_coord.separation(gal_coord).arcsec
+                if sep < 1.0 and is_in_bounds(row['ra'], row['dec']):
+                    regions.append({
+                        'ra': row['ra'],
+                        'dec': row['dec'],
+                        'z': row['z_phot'],
+                        'type': 'photoz_only',
+                        'label': f"ID 20388: z_phot={row['z_phot']:.3f}",
+                        'id': '20388'
+                    })
+                    logger.info(f"Region 1: Found ID 20388 in photo-z only at z={row['z_phot']:.3f}")
+                    found_target = True
+                    break
+    
+    # If still not found, use the coordinates directly
+    if not found_target and is_in_bounds(target_ra, target_dec):
+        regions.append({
+            'ra': target_ra,
+            'dec': target_dec,
+            'z': 0.0,  # Unknown redshift
+            'type': 'matched',
+            'label': f"ID 20388 (RA={target_ra:.4f}, Dec={target_dec:.4f})",
+            'id': '20388'
+        })
+        logger.info(f"Region 1: Using coordinates for ID 20388 (not in catalogs)")
+    elif not found_target:
+        logger.warning("ID 20388 not found or outside image bounds")
+    
+    # Regions 2-4: Find 3 matched galaxies with different redshifts
+    if len(matched_df) > 0:
+        # Filter to galaxies within image bounds (excluding the target if already added)
         in_bounds_matched = matched_df[
             matched_df.apply(lambda row: is_in_bounds(row['ra'], row['dec']), axis=1)
         ].copy()
         
-        if len(in_bounds_matched) >= 4:
+        # Remove target galaxy if it's in the list
+        if found_target and len(regions) > 0:
+            target_ra_check = regions[0]['ra']
+            target_dec_check = regions[0]['dec']
+            in_bounds_matched = in_bounds_matched[
+                ~((np.abs(in_bounds_matched['ra'] - target_ra_check) < 0.001) & 
+                  (np.abs(in_bounds_matched['dec'] - target_dec_check) < 0.001))
+            ]
+        
+        if len(in_bounds_matched) >= 3:
             # Sort by redshift and select galaxies across the redshift range
             in_bounds_matched = in_bounds_matched.sort_values('z_spec')
             
-            # Select galaxies at 20%, 40%, 60%, 80% percentiles
+            # Select galaxies at 33%, 50%, 75% percentiles
             indices = [
-                int(len(in_bounds_matched) * 0.2),
-                int(len(in_bounds_matched) * 0.4),
-                int(len(in_bounds_matched) * 0.6),
-                int(len(in_bounds_matched) * 0.8)
+                int(len(in_bounds_matched) * 0.33),
+                int(len(in_bounds_matched) * 0.50),
+                int(len(in_bounds_matched) * 0.75)
             ]
             
             for i, idx in enumerate(indices):
@@ -103,9 +175,8 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
                     'type': 'matched',
                     'label': f"Matched: z_spec={row['z_spec']:.3f}, z_phot={row['z_phot']:.3f}"
                 })
-                logger.info(f"Region {i+1}: Matched galaxy at z_spec={row['z_spec']:.3f}")
+                logger.info(f"Region {len(regions)}: Matched galaxy at z_spec={row['z_spec']:.3f}")
         else:
-            logger.warning(f"Only found {len(in_bounds_matched)} matched galaxies in bounds")
             # Add what we can find
             for idx, row in in_bounds_matched.iterrows():
                 if len(regions) >= 4:
@@ -119,7 +190,7 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
                     'label': f"Matched: z_spec={row['z_spec']:.3f}, z_phot={row['z_phot']:.3f}"
                 })
     
-    # 5: Find high-z photo-z only galaxy
+    # Region 5: Find highest-z photo-z only galaxy
     photoz_only_df = cross_match['photoz_only']
     if len(photoz_only_df) > 0:
         in_bounds_photoz = photoz_only_df[
@@ -134,11 +205,11 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
                 'dec': high_z_photoz['dec'],
                 'z': high_z_photoz['z_phot'],
                 'type': 'photoz_only',
-                'label': f"Photo-z only: z={high_z_photoz['z_phot']:.3f}"
+                'label': f"Highest z (photo-z only): z={high_z_photoz['z_phot']:.3f}"
             })
-            logger.info(f"Region {len(regions)}: Photo-z only at z={high_z_photoz['z_phot']:.3f}")
+            logger.info(f"Region {len(regions)}: Highest z photo-z only at z={high_z_photoz['z_phot']:.3f}")
     
-    # 6: Find high-z spec-z only galaxy
+    # Region 6: Find highest-z spec-z only galaxy
     specz_only_df = cross_match['specz_only']
     if len(specz_only_df) > 0:
         in_bounds_specz = specz_only_df[
@@ -153,9 +224,9 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
                 'dec': high_z_specz['dec'],
                 'z': high_z_specz['z_spec'],
                 'type': 'specz_only',
-                'label': f"Spec-z only: z={high_z_specz['z_spec']:.3f}"
+                'label': f"Highest z (spec-z only): z={high_z_specz['z_spec']:.3f}"
             })
-            logger.info(f"Region {len(regions)}: Spec-z only at z={high_z_specz['z_spec']:.3f}")
+            logger.info(f"Region {len(regions)}: Highest z spec-z only at z={high_z_specz['z_spec']:.3f}")
     
     # Fill remaining slots if we don't have 6 yet
     while len(regions) < n_regions:
@@ -310,16 +381,24 @@ def create_multi_panel_figure(rgb_image, wcs, photoz_path, specz_path,
     
     # Create figure with custom layout (lower DPI for memory efficiency)
     # Left: full mosaic (wide)
-    # Right: 3x2 grid of zoom panels
-    fig = plt.figure(figsize=(20, 12), dpi=100)
+    # Right: 3x2 grid of zoom panels (larger with tighter spacing)
+    fig = plt.figure(figsize=(16, 12), dpi=100)
     
-    # Create grid spec for layout
-    gs = fig.add_gridspec(3, 3, width_ratios=[2, 1, 1], 
-                         hspace=0.3, wspace=0.3,
-                         left=0.05, right=0.98, top=0.95, bottom=0.05)
+    # Create TWO separate gridspecs - one for main panel, one for zoom panels
+    # This allows independent control of spacing
+    from matplotlib.gridspec import GridSpec
     
-    # Main panel (left side, spans all rows)
-    ax_main = fig.add_subplot(gs[:, 0], projection=wcs)
+    # Overall grid: 2 columns [main | zooms]
+    gs_main = GridSpec(1, 2, figure=fig,
+                   width_ratios=[2, 1.2],
+                   left=0.0002, right=0.9998,
+                   wspace=0.02)  # Gap between main and zoom columns
+    
+    # Subgrid for zoom panels (3 rows x 2 columns)
+    gs_zoom = gs_main[0, 1].subgridspec(3, 2, hspace=0.15, wspace=0)
+    
+    # Main panel (left side)
+    ax_main = fig.add_subplot(gs_main[0, 0], projection=wcs)
     
     # Zoom panels (right side, 3 rows x 2 columns)
     zoom_axes = []
@@ -329,7 +408,7 @@ def create_multi_panel_figure(rgb_image, wcs, photoz_path, specz_path,
         for j in range(2):
             idx = i * 2 + j
             if idx < len(regions):
-                ax = fig.add_subplot(gs[i, j+1])
+                ax = fig.add_subplot(gs_zoom[i, j])
                 zoom_axes.append(ax)
     
     # === Main Panel ===
@@ -370,7 +449,7 @@ def create_multi_panel_figure(rgb_image, wcs, photoz_path, specz_path,
         # Create zoom panel
         x_min, y_min, width, height = create_zoom_panel(
             ax_zoom, rgb_image, wcs, region,
-            box_size_arcsec=5.0, show_crosshair=True
+            box_size_arcsec=20.0, show_crosshair=True
         )
         
         # Add panel label
@@ -395,21 +474,21 @@ def create_multi_panel_figure(rgb_image, wcs, photoz_path, specz_path,
                    bbox=dict(boxstyle='round', facecolor='black', 
                             alpha=0.7, edgecolor=color, linewidth=1.5))
     
-    # Add legend to main panel for marker types
+    # Add legend to main panel
     from matplotlib.lines import Line2D
     legend_elements = [
-        Line2D([0], [0], marker='o', color='w', markeredgecolor='cyan',
+        Line2D([0], [0], marker='o', color='w', markeredgecolor='white',
                markeredgewidth=2, markersize=10, linestyle='None',
-               label='Matched (photo-z & spec-z)'),
-        Line2D([0], [0], marker='s', color='w', markeredgecolor='yellow',
+               label='Circle: matched (both z types)'),
+        Line2D([0], [0], marker='s', color='w', markeredgecolor='white',
                markeredgewidth=2, markersize=10, linestyle='None',
-               label='Photo-z only'),
-        Line2D([0], [0], marker='^', color='w', markeredgecolor='lime',
+               label='Square: photo-z only'),
+        Line2D([0], [0], marker='^', color='w', markeredgecolor='white',
                markeredgewidth=2, markersize=10, linestyle='None',
-               label='Spec-z only')
+               label='Triangle: spec-z only')
     ]
     ax_main.legend(handles=legend_elements, loc='lower right', 
-                  fontsize=9, framealpha=0.9)
+                  fontsize=9, framealpha=0.9, title='Galaxy Types')
     
     # Save if output file specified
     if output_file:
