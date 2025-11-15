@@ -8,6 +8,8 @@ This module creates a multi-panel figure showing:
 - Labels for each panel (a, b, c, d, e, f)
 
 Subregions highlight interesting galaxies with different redshift properties.
+
+NOTE: This module is designed to be imported only. It does not run standalone.
 """
 
 import os
@@ -97,7 +99,8 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
                     'z_phot': row['z_phot'],
                     'type': 'matched',
                     'label': f"ID 20388: z_spec={row['z_spec']:.3f}, z_phot={row['z_phot']:.3f}",
-                    'id': '20388'
+                    'id': '20388',
+                    'box_size': 20.0  # 20 arcsec for ID 20388
                 })
                 logger.info(f"Region 1: Found ID 20388 in matched catalog at z_spec={row['z_spec']:.3f}")
                 found_target = True
@@ -118,7 +121,8 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
                         'z': row['z_phot'],
                         'type': 'photoz_only',
                         'label': f"ID 20388: z_phot={row['z_phot']:.3f}",
-                        'id': '20388'
+                        'id': '20388',
+                        'box_size': 20.0  # 20 arcsec for ID 20388
                     })
                     logger.info(f"Region 1: Found ID 20388 in photo-z only at z={row['z_phot']:.3f}")
                     found_target = True
@@ -132,7 +136,8 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
             'z': 0.0,  # Unknown redshift
             'type': 'matched',
             'label': f"ID 20388 (RA={target_ra:.4f}, Dec={target_dec:.4f})",
-            'id': '20388'
+            'id': '20388',
+            'box_size': 20.0  # 20 arcsec for ID 20388
         })
         logger.info(f"Region 1: Using coordinates for ID 20388 (not in catalogs)")
     elif not found_target:
@@ -173,7 +178,8 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
                     'z': row['z_spec'],
                     'z_phot': row['z_phot'],
                     'type': 'matched',
-                    'label': f"Matched: z_spec={row['z_spec']:.3f}, z_phot={row['z_phot']:.3f}"
+                    'label': f"Matched: z_spec={row['z_spec']:.3f}, z_phot={row['z_phot']:.3f}",
+                    'box_size': 5.0  # 5 arcsec for other galaxies
                 })
                 logger.info(f"Region {len(regions)}: Matched galaxy at z_spec={row['z_spec']:.3f}")
         else:
@@ -187,7 +193,8 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
                     'z': row['z_spec'],
                     'z_phot': row['z_phot'],
                     'type': 'matched',
-                    'label': f"Matched: z_spec={row['z_spec']:.3f}, z_phot={row['z_phot']:.3f}"
+                    'label': f"Matched: z_spec={row['z_spec']:.3f}, z_phot={row['z_phot']:.3f}",
+                    'box_size': 5.0  # 5 arcsec for other galaxies
                 })
     
     # Region 5: Find highest-z photo-z only galaxy
@@ -205,7 +212,8 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
                 'dec': high_z_photoz['dec'],
                 'z': high_z_photoz['z_phot'],
                 'type': 'photoz_only',
-                'label': f"Highest z (photo-z only): z={high_z_photoz['z_phot']:.3f}"
+                'label': f"Highest z (photo-z only): z={high_z_photoz['z_phot']:.3f}",
+                'box_size': 5.0  # 5 arcsec for other galaxies
             })
             logger.info(f"Region {len(regions)}: Highest z photo-z only at z={high_z_photoz['z_phot']:.3f}")
     
@@ -224,7 +232,8 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
                 'dec': high_z_specz['dec'],
                 'z': high_z_specz['z_spec'],
                 'type': 'specz_only',
-                'label': f"Highest z (spec-z only): z={high_z_specz['z_spec']:.3f}"
+                'label': f"Highest z (spec-z only): z={high_z_specz['z_spec']:.3f}",
+                'box_size': 5.0  # 5 arcsec for other galaxies
             })
             logger.info(f"Region {len(regions)}: Highest z spec-z only at z={high_z_specz['z_spec']:.3f}")
     
@@ -243,7 +252,8 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
                     'z': row['z_spec'],
                     'z_phot': row['z_phot'],
                     'type': 'matched',
-                    'label': f"Matched: z_spec={row['z_spec']:.3f}"
+                    'label': f"Matched: z_spec={row['z_spec']:.3f}",
+                    'box_size': 5.0  # 5 arcsec for other galaxies
                 })
             else:
                 break
@@ -254,8 +264,7 @@ def find_interesting_galaxies(photoz_df, specz_df, cross_match, wcs, n_regions=6
     return regions
 
 
-def create_zoom_panel(ax, rgb_image, wcs, region, box_size_arcsec=5.0, 
-                     show_crosshair=True):
+def create_zoom_panel(ax, rgb_image, wcs, region, show_crosshair=True):
     """
     Create a zoomed-in view of a specific region.
     
@@ -268,9 +277,7 @@ def create_zoom_panel(ax, rgb_image, wcs, region, box_size_arcsec=5.0,
     wcs : astropy.wcs.WCS
         WCS object
     region : dict
-        Region dictionary with 'ra', 'dec', 'z', 'type', 'label'
-    box_size_arcsec : float, optional
-        Size of zoom box in arcseconds (default: 5.0)
+        Region dictionary with 'ra', 'dec', 'z', 'type', 'label', 'box_size'
     show_crosshair : bool, optional
         Show crosshair at galaxy center (default: True)
     
@@ -279,6 +286,9 @@ def create_zoom_panel(ax, rgb_image, wcs, region, box_size_arcsec=5.0,
     tuple
         (x_min, y_min, width, height) for main panel rectangle
     """
+    # Get box size from region (defaults to 5.0 if not specified)
+    box_size_arcsec = region.get('box_size', 5.0)
+    
     # Convert RA/Dec to pixel coordinates
     coord = SkyCoord(ra=region['ra']*u.degree, dec=region['dec']*u.degree, frame='icrs')
     x_center, y_center = wcs.world_to_pixel(coord)
@@ -320,8 +330,9 @@ def create_zoom_panel(ax, rgb_image, wcs, region, box_size_arcsec=5.0,
                markersize=12, markerfacecolor='none',
                markeredgecolor=color, markeredgewidth=2)
     
-    # Add label
-    label_text = region['label']
+    # Add label with ID and box size
+    obj_id = region.get('id', 'Unknown')
+    label_text = f"{region['label']}\n({box_size_arcsec:.0f}\" box)"
     ax.text(0.05, 0.95, label_text, transform=ax.transAxes,
            fontsize=8, verticalalignment='top', color='white',
            bbox=dict(boxstyle='round', facecolor='black', alpha=0.7))
@@ -444,12 +455,12 @@ def create_multi_panel_figure(rgb_image, wcs, photoz_path, specz_path,
     rect_colors = ['cyan', 'yellow', 'lime', 'magenta', 'orange', 'red']
     
     for i, (ax_zoom, region, label) in enumerate(zip(zoom_axes, regions, panel_labels)):
-        logger.info(f"Creating panel {label} for {region['type']} galaxy at z={region['z']:.3f}")
+        obj_id = region.get('id', 'Unknown')
+        logger.info(f"Creating panel {label} for {obj_id} ({region['type']}) at z={region['z']:.3f}")
         
-        # Create zoom panel
+        # Create zoom panel (box size is now stored in region)
         x_min, y_min, width, height = create_zoom_panel(
-            ax_zoom, rgb_image, wcs, region,
-            box_size_arcsec=20.0, show_crosshair=True
+            ax_zoom, rgb_image, wcs, region, show_crosshair=True
         )
         
         # Add panel label
@@ -495,7 +506,7 @@ def create_multi_panel_figure(rgb_image, wcs, photoz_path, specz_path,
         script_dir = os.path.dirname(os.path.abspath(__file__))
         output_path = os.path.join(script_dir, output_file)
         logger.info(f"Saving multi-panel figure to {output_path}")
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.savefig(output_path, dpi=100, bbox_inches='tight')
         logger.info("Multi-panel figure saved successfully")
     
     # Clean up to free memory
