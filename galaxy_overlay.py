@@ -12,6 +12,7 @@ This module provides functionality to:
 
 import os
 import logging
+import gc
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -310,71 +311,71 @@ def overlay_galaxies_by_type(ax, wcs, matched_df, photoz_only_df, specz_only_df=
     
     plotted = {'matched': 0, 'photoz_only': 0, 'specz_only': 0}
     
+    # Use vectorized operations instead of loops for memory efficiency
     # Plot matched sources (have spec-z) - use CIRCLES
     logger.info(f"Plotting {len(matched_df)} matched sources (circles)")
-    for idx, row in matched_df.iterrows():
-        try:
-            coord = SkyCoord(ra=row['ra']*u.degree, dec=row['dec']*u.degree, frame='icrs')
-            x, y = wcs.world_to_pixel(coord)
-            
-            if 0 <= x < nx and 0 <= y < ny:
-                color = cmap(norm(row['z_spec']))
-                ax.plot(x, y, 'o', color='none', markeredgecolor=color,
-                       markeredgewidth=2, markersize=marker_size**0.5,
-                       alpha=0.9, zorder=10)
-                
-                if show_labels:
-                    ax.text(x+5, y+5, f"s:{row['z_spec']:.2f}",
-                           color='white', fontsize=7,
-                           bbox=dict(boxstyle='round,pad=0.3', 
-                                   facecolor='black', alpha=0.7),
-                           zorder=11)
-                plotted['matched'] += 1
-        except Exception as e:
-            logger.debug(f"Error plotting matched galaxy: {e}")
-            continue
+    if len(matched_df) > 0:
+        coords = SkyCoord(ra=matched_df['ra'].values*u.degree, 
+                         dec=matched_df['dec'].values*u.degree, frame='icrs')
+        x_vals, y_vals = wcs.world_to_pixel(coords)
+        
+        # Filter to only points within image bounds
+        mask = (x_vals >= 0) & (x_vals < nx) & (y_vals >= 0) & (y_vals < ny)
+        x_plot = x_vals[mask]
+        y_plot = y_vals[mask]
+        z_plot = matched_df['z_spec'].values[mask]
+        
+        # Get colors for all points at once
+        colors = cmap(norm(z_plot))
+        
+        # Single scatter call for all matched galaxies
+        ax.scatter(x_plot, y_plot, s=marker_size, facecolors='none', 
+                  edgecolors=colors, marker='o', linewidths=2,
+                  alpha=0.9, zorder=10)
+        
+        plotted['matched'] = len(x_plot)
     
     # Plot photo-z only sources - use SQUARES
     logger.info(f"Plotting {len(photoz_only_df)} photo-z only sources (squares)")
-    for idx, row in photoz_only_df.iterrows():
-        try:
-            coord = SkyCoord(ra=row['ra']*u.degree, dec=row['dec']*u.degree, frame='icrs')
-            x, y = wcs.world_to_pixel(coord)
-            
-            if 0 <= x < nx and 0 <= y < ny:
-                color = cmap(norm(row['z_phot']))
-                ax.plot(x, y, 's', color='none', markeredgecolor=color,
-                       markeredgewidth=2, markersize=marker_size**0.5,
-                       alpha=0.9, zorder=10)
-                
-                if show_labels:
-                    ax.text(x+5, y+5, f"p:{row['z_phot']:.2f}",
-                           color='white', fontsize=7,
-                           bbox=dict(boxstyle='round,pad=0.3', 
-                                   facecolor='blue', alpha=0.7),
-                           zorder=11)
-                plotted['photoz_only'] += 1
-        except Exception as e:
-            logger.debug(f"Error plotting photo-z galaxy: {e}")
-            continue
+    if len(photoz_only_df) > 0:
+        coords = SkyCoord(ra=photoz_only_df['ra'].values*u.degree,
+                         dec=photoz_only_df['dec'].values*u.degree, frame='icrs')
+        x_vals, y_vals = wcs.world_to_pixel(coords)
+        
+        mask = (x_vals >= 0) & (x_vals < nx) & (y_vals >= 0) & (y_vals < ny)
+        x_plot = x_vals[mask]
+        y_plot = y_vals[mask]
+        z_plot = photoz_only_df['z_phot'].values[mask]
+        
+        colors = cmap(norm(z_plot))
+        
+        # Single scatter call for all photo-z only galaxies
+        ax.scatter(x_plot, y_plot, s=marker_size, facecolors='none',
+                  edgecolors=colors, marker='s', linewidths=2,
+                  alpha=0.9, zorder=10)
+        
+        plotted['photoz_only'] = len(x_plot)
     
     # Plot spec-z only sources (no photo-z) - use TRIANGLES if provided
     if specz_only_df is not None and len(specz_only_df) > 0:
         logger.info(f"Plotting {len(specz_only_df)} spec-z only sources (triangles)")
-        for idx, row in specz_only_df.iterrows():
-            try:
-                coord = SkyCoord(ra=row['ra']*u.degree, dec=row['dec']*u.degree, frame='icrs')
-                x, y = wcs.world_to_pixel(coord)
-                
-                if 0 <= x < nx and 0 <= y < ny:
-                    color = cmap(norm(row['z_spec']))
-                    ax.plot(x, y, '^', color='none', markeredgecolor=color,
-                           markeredgewidth=2, markersize=marker_size**0.5,
-                           alpha=0.9, zorder=10)
-                    plotted['specz_only'] += 1
-            except Exception as e:
-                logger.debug(f"Error plotting spec-z only galaxy: {e}")
-                continue
+        coords = SkyCoord(ra=specz_only_df['ra'].values*u.degree,
+                         dec=specz_only_df['dec'].values*u.degree, frame='icrs')
+        x_vals, y_vals = wcs.world_to_pixel(coords)
+        
+        mask = (x_vals >= 0) & (x_vals < nx) & (y_vals >= 0) & (y_vals < ny)
+        x_plot = x_vals[mask]
+        y_plot = y_vals[mask]
+        z_plot = specz_only_df['z_spec'].values[mask]
+        
+        colors = cmap(norm(z_plot))
+        
+        # Single scatter call for all spec-z only galaxies
+        ax.scatter(x_plot, y_plot, s=marker_size, facecolors='none',
+                  edgecolors=colors, marker='^', linewidths=2,
+                  alpha=0.9, zorder=10)
+        
+        plotted['specz_only'] = len(x_plot)
     
     logger.info(f"Successfully plotted: {plotted['matched']} matched, "
                f"{plotted['photoz_only']} photo-z only, {plotted['specz_only']} spec-z only")
@@ -384,6 +385,9 @@ def overlay_galaxies_by_type(ax, wcs, matched_df, photoz_only_df, specz_only_df=
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=ax, pad=0.02, fraction=0.046)
     cbar.set_label('Redshift (z)', fontsize=11)
+    
+    # Force garbage collection to free memory
+    gc.collect()
     
     # Add legend
     from matplotlib.lines import Line2D
@@ -559,7 +563,7 @@ def create_galaxy_overlay_plot(rgb_image, wcs, photoz_path='phot_z.csv',
         script_dir = os.path.dirname(os.path.abspath(__file__))
         output_path = os.path.join(script_dir, output_file)
         logger.info(f"Saving plot to {output_path}")
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.savefig(output_path, dpi=100, bbox_inches='tight')
         logger.info(f"Plot saved successfully to {output_path}")
     
     # Create photo-z vs spec-z comparison plot

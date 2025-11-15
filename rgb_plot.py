@@ -11,6 +11,7 @@ This module provides functionality to:
 
 import os
 import logging
+import gc
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
@@ -54,8 +55,9 @@ def load_fits_image(filepath):
     logger.info(f"Loading FITS file: {filepath}")
     
     try:
-        with fits.open(filepath) as hdul:
-            data = hdul[0].data
+        with fits.open(filepath, memmap=True) as hdul:
+            # Use memmap to avoid loading entire file into memory at once
+            data = hdul[0].data.copy()  # Make a copy to close the file properly
             header = hdul[0].header
             wcs = WCS(header)
             
@@ -103,25 +105,40 @@ def scale_image_percentile(data, lower_percentile=1, upper_percentile=99.5):
     
     logger.info(f"Scaling image with percentiles: {lower_percentile}-{upper_percentile}")
     
-    # Handle NaN values
-    valid_data = data[np.isfinite(data)]
+    # Handle NaN values - use boolean indexing which is more memory efficient
+    finite_mask = np.isfinite(data)
     
-    if len(valid_data) == 0:
+    if not np.any(finite_mask):
         logger.warning("No valid data found, returning zeros")
-        return np.zeros_like(data)
+        return np.zeros_like(data, dtype=np.float32)
     
-    # Calculate percentile values
+    # Calculate percentile values using only valid data
+    # Use float32 to save memory if input is float64
+    if data.dtype == np.float64:
+        valid_data = data[finite_mask].astype(np.float32)
+    else:
+        valid_data = data[finite_mask]
+    
     vmin = np.percentile(valid_data, lower_percentile)
     vmax = np.percentile(valid_data, upper_percentile)
     
     logger.info(f"Percentile range: {vmin:.2e} to {vmax:.2e}")
     
-    # Clip and normalize
-    scaled = np.clip(data, vmin, vmax)
-    scaled = (scaled - vmin) / (vmax - vmin)
+    # Free memory
+    del valid_data
+    gc.collect()
+    
+    # Clip and normalize in-place to save memory
+    scaled = np.clip(data, vmin, vmax, dtype=np.float32)
+    
+    # Avoid division by zero
+    if vmax > vmin:
+        scaled = (scaled - vmin) / (vmax - vmin)
+    else:
+        scaled = np.zeros_like(scaled)
     
     # Replace NaNs with 0
-    scaled = np.nan_to_num(scaled, nan=0.0)
+    scaled[~finite_mask] = 0.0
     
     return scaled
 
@@ -177,35 +194,46 @@ def create_rgb_image(f850_data, f775_data, f606_data, f435_data,
     
     logger.info(f"Creating RGB image from 4 filters with {stretch} stretch")
     
-    # Combine F850LP and F775W for red channel (average or weighted combination)
-    red_data = (f850_data + f775_data) / 2.0
-    green_data = f606_data
-    blue_data = f435_data
-    
-    # Scale each channel
+    # Combine F850LP and F775W for red channel (average)
+    # Use in-place operations and float32 to save memory
+    logger.info("Processing red channel (F850LP + F775W)")
+    red_data = (f850_data.astype(np.float32) + f775_data.astype(np.float32)) / 2.0
     red_scaled = scale_image_percentile(red_data, red_scale[0], red_scale[1])
-    green_scaled = scale_image_percentile(green_data, green_scale[0], green_scale[1])
-    blue_scaled = scale_image_percentile(blue_data, blue_scale[0], blue_scale[1])
+    del red_data  # Free memory immediately
+    gc.collect()
+    
+    # Process green channel
+    logger.info("Processing green channel (F606W)")
+    green_scaled = scale_image_percentile(f606_data, green_scale[0], green_scale[1])
+    
+    # Process blue channel
+    logger.info("Processing blue channel (F435W)")
+    blue_scaled = scale_image_percentile(f435_data, blue_scale[0], blue_scale[1])
     
     # Apply stretch if specified
     if stretch == 'asinh':
+        logger.info("Applying asinh stretch")
+        # Use in-place operations where possible
         red_scaled = np.arcsinh(red_scaled * 10) / np.arcsinh(10)
         green_scaled = np.arcsinh(green_scaled * 10) / np.arcsinh(10)
         blue_scaled = np.arcsinh(blue_scaled * 10) / np.arcsinh(10)
     elif stretch == 'sqrt':
+        logger.info("Applying sqrt stretch")
         red_scaled = np.sqrt(red_scaled)
         green_scaled = np.sqrt(green_scaled)
         blue_scaled = np.sqrt(blue_scaled)
     
-    # Stack into RGB array
-    rgb = np.dstack([red_scaled, green_scaled, blue_scaled])
+    # Stack into RGB array - use float32 to save memory
+    logger.info("Stacking channels into RGB array")
+    rgb = np.dstack([red_scaled, green_scaled, blue_scaled]).astype(np.float32)
     
-    logger.info(f"RGB image created with shape: {rgb.shape}")
+    # Clean up individual channels
+    del red_scaled, green_scaled, blue_scaled
+    gc.collect()
+    
+    logger.info(f"RGB image created with shape: {rgb.shape}, dtype: {rgb.dtype}")
     
     return rgb
-
-
-
 
 
 def plot_rgb_with_wcs(rgb_image, wcs, title='HUDF RGB Composite', 
@@ -247,8 +275,8 @@ def plot_rgb_with_wcs(rgb_image, wcs, title='HUDF RGB Composite',
     
     logger.info("Plotting RGB image with WCS coordinates")
     
-    # Create figure with WCS projection
-    fig = plt.figure(figsize=(14, 12))
+    # Create figure with WCS projection - use lower DPI for memory efficiency
+    fig = plt.figure(figsize=(14, 12), dpi=100)
     ax = fig.add_subplot(111, projection=wcs)
     
     # Display RGB image
@@ -285,6 +313,9 @@ def plot_rgb_with_wcs(rgb_image, wcs, title='HUDF RGB Composite',
         logger.info(f"Saving plot to {output_path}")
         plt.savefig(output_path, dpi=100, bbox_inches='tight')
         logger.info(f"Plot saved successfully")
+    
+    # Force garbage collection after plotting
+    gc.collect()
     
     return fig, ax
 

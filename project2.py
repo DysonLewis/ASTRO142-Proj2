@@ -11,14 +11,14 @@ This script:
 5. Overlays galaxy detections distinguishing photo-z vs spec-z
 6. Creates photo-z vs spec-z comparison plot
 7. Displays the result with WCS equatorial coordinates
-
-Date: 2025-11-13
 """
 
 import logging
 import sys
 import os
+import gc
 import argparse
+import matplotlib.pyplot as plt
 from astropy.io import fits
 
 # Import project modules
@@ -146,6 +146,12 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
             stretch='asinh'
         )
         
+        # Delete raw FITS data to free memory
+        logger.info("Releasing FITS data memory after RGB creation")
+        del f850_data, f775_data, f606_data, f435_data
+        del f850_header, f775_header, f606_header, f435_header
+        gc.collect()
+        
         # Step 6: Create base plot without galaxy overlays
         logger.info("\n[Step 6] Generating base RGB plot with equatorial coordinates...")
         
@@ -162,6 +168,11 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
             filter_info=filter_info,
             output_file=output_file
         )
+        
+        # Close the figure to free memory before creating overlay
+        logger.info("Closing base figure to free memory")
+        plt.close(fig)
+        gc.collect()
         
         # Step 7: Create version with galaxy overlays (photo-z and spec-z)
         logger.info("\n[Step 7] Creating version with galaxy overlays...")
@@ -182,6 +193,10 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
             output_file=overlay_output
         )
         
+        # Clean up
+        plt.close(fig_gal)
+        gc.collect()
+        
         # Print cross-match summary
         logger.info("\n[Cross-match Summary]")
         logger.info(f"  Matched (have both photo-z and spec-z): {len(cross_match['matched'])}")
@@ -200,8 +215,7 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
         logger.info("="*60)
         
         # Uncomment to display the plot
-        # import matplotlib.pyplot as plt
-        # plt.show()
+        #plt.show()
         
     except FileNotFoundError as e:
         logger.error(f"File not found: {e}")
@@ -242,6 +256,7 @@ Output:
   2. Version with galaxy overlays (*_with_galaxies.png)
      - Circles = spectroscopic redshifts
      - Squares = photometric redshifts only
+     - Triangles = spectroscopic redshifts with no photo-z match
   3. Photo-z vs Spec-z comparison plot (*_photoz_vs_specz.png)
         """
     )
