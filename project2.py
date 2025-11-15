@@ -11,6 +11,7 @@ This script:
 5. Overlays galaxy detections distinguishing photo-z vs spec-z
 6. Creates photo-z vs spec-z comparison plot
 7. Displays the result with WCS equatorial coordinates
+8. Creates multi-panel figure with zoom insets
 """
 
 import logging
@@ -25,6 +26,7 @@ from astropy.io import fits
 import query
 import rgb_plot
 import galaxy_overlay
+import multi_panel
 
 # Get script directory for log file
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -43,7 +45,12 @@ logger = logging.getLogger(__name__)
 
 
 def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png',
+<<<<<<< HEAD
          n_galaxies=100, photoz_csv='phot_z.csv', specz_file='Rafelski_UDF_speczlist15.txt'):
+=======
+         n_galaxies=100, photoz_csv='phot_z.csv', specz_file='Rafelski_UDF_speczlist15.txt',
+         create_multipanel=True):
+>>>>>>> dev
     """
     Main function to run the HUDF analysis pipeline.
     
@@ -61,6 +68,8 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
         Path to photometric redshift CSV file (default: 'phot_z.csv')
     specz_file : str, optional
         Path to spectroscopic redshift file (default: 'Rafelski_UDF_speczlist15.txt')
+    create_multipanel : bool, optional
+        Whether to create multi-panel zoom figure (default: True)
     
     Raises
     ------
@@ -146,10 +155,11 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
             stretch='asinh'
         )
         
-        # Delete raw FITS data to free memory
+        # Delete raw FITS data to free memory (except WCS which we need)
         logger.info("Releasing FITS data memory after RGB creation")
         del f850_data, f775_data, f606_data, f435_data
-        del f850_header, f775_header, f606_header, f435_header
+        del f775_header, f606_header, f435_header
+        # Keep f850_wcs and f850_header for later use
         gc.collect()
         
         # Step 6: Create base plot without galaxy overlays
@@ -172,6 +182,7 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
         # Close the figure to free memory before creating overlay
         logger.info("Closing base figure to free memory")
         plt.close(fig)
+        del fig, ax
         gc.collect()
         
         # Step 7: Create version with galaxy overlays (photo-z and spec-z)
@@ -195,6 +206,7 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
         
         # Clean up
         plt.close(fig_gal)
+        del fig_gal, ax_gal, cbar
         gc.collect()
         
         # Print cross-match summary
@@ -209,6 +221,31 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
         if len(cross_match['matched']) > 0:
             comparison_file = overlay_output.replace('.png', '_photoz_vs_specz.png')
             logger.info(f"[Complete] Photo-z vs Spec-z comparison saved to: {comparison_file}")
+        
+        # Step 8: Create multi-panel figure with zoom insets
+        if create_multipanel:
+            logger.info("\n[Step 8] Creating multi-panel figure with zoom insets...")
+            multipanel_output = output_file.replace('.png', '_multi_panel.png')
+            
+            fig_multi, axes_multi = multi_panel.create_multi_panel_figure(
+                rgb_image,
+                f850_wcs,
+                photoz_path=photoz_path,
+                specz_path=specz_path,
+                n_galaxies=n_galaxies,
+                output_file=multipanel_output
+            )
+            
+            logger.info(f"[Complete] Multi-panel figure saved to: {multipanel_output}")
+            
+            # Clean up
+            del fig_multi, axes_multi
+            gc.collect()
+        
+        # Final cleanup
+        logger.info("\nReleasing final memory...")
+        del rgb_image, f850_wcs, f850_header
+        gc.collect()
         
         logger.info("="*60)
         logger.info("Pipeline completed successfully!")
@@ -250,14 +287,20 @@ Examples:
   # Specify custom catalog files
   python project2.py --photoz-csv my_photoz.csv --specz-file my_specz.txt
   
+  # Skip multi-panel figure creation
+  python project2.py --no-multipanel
+  
 Output:
-  Creates three files:
+  Creates four files:
   1. Base RGB mosaic (specified by --output)
   2. Version with galaxy overlays (*_with_galaxies.png)
      - Circles = spectroscopic redshifts
      - Squares = photometric redshifts only
      - Triangles = spectroscopic redshifts with no photo-z match
   3. Photo-z vs Spec-z comparison plot (*_photoz_vs_specz.png)
+  4. Multi-panel figure with zoom insets (*_multi_panel.png)
+     - Left: full HUDF mosaic
+     - Right: 6 zoomed-in galaxy regions (3x2 grid)
         """
     )
     
@@ -302,6 +345,12 @@ Output:
         help='Spectroscopic redshift text file (default: Rafelski_UDF_speczlist15.txt)'
     )
     
+    parser.add_argument(
+        '--no-multipanel',
+        action='store_true',
+        help='Skip creating multi-panel zoom figure'
+    )
+    
     args = parser.parse_args()
     
     # Run main pipeline
@@ -311,5 +360,6 @@ Output:
         output_file=args.output,
         n_galaxies=args.n_galaxies,
         photoz_csv=args.photoz_csv,
-        specz_file=args.specz_file
+        specz_file=args.specz_file,
+        create_multipanel=not args.no_multipanel
     )
