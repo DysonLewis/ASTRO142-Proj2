@@ -229,38 +229,24 @@ def download_photoz_catalog_from_ned(
     """
     Download photometric redshift catalog from NED by reference code.
     
-    This function accesses the NED database page for a specific reference
-    and downloads the CSV file containing photometric redshift data.
+    This function automatically finds the CSV download link on the NED reference page
+    and downloads the photometric redshift catalog.
     
     Parameters
     ----------
-    ned_refcode_url : str, optional
+    ned_refcode_url : str
         URL of the NED reference code page
-        (default: 'https://ned.ipac.caltech.edu/uri/NED::InRefcode/2006AJ....132..926C')
     output_filename : str, optional
         Name for the output CSV file (default: 'phot_z.csv')
     output_dir : str, optional
-        Directory to save catalog (default: './' - working directory)
+        Directory to save catalog (default: './')
     
     Returns
     -------
     str
         Path to downloaded catalog file
-    
-    Raises
-    ------
-    requests.RequestException
-        If there's an error accessing NED
-    ValueError
-        If CSV download link cannot be found
-    
-    Notes
-    -----
-    This downloads the CSV format of the catalog from the NED database.
-    The reference code 2006AJ....132..926C corresponds to Coe et al. 2006.
     """
-    logger.info(f"Downloading photometric redshift catalog from NED")
-    logger.info(f"Reference: {ned_refcode_url}")
+    logger.info(f"Accessing NED reference page: {ned_refcode_url}")
     
     # Create output directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -275,81 +261,52 @@ def download_photoz_catalog_from_ned(
         return output_path
     
     try:
-        # Step 1: Access the NED reference page
-        logger.info("Accessing NED reference page...")
+        # Step 1: Fetch NED reference page
         response = requests.get(ned_refcode_url, timeout=30)
         response.raise_for_status()
-        
-        # Step 2: Parse HTML to find the CSV download link
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Look for the CSV download link
-        # NED typically has a link with text containing "ASCII" or "CSV" or "Download"
+        # Step 2: Find the CSV link
         csv_link = None
-        
-        # Try different methods to find the CSV link
-        # Method 1: Look for links containing 'datasearch' and 'csv'
-        for link in soup.find_all('a', href=True):
-            href = link.get('href', '')
-            text = link.get_text().lower()
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            text = a.get_text().lower()
+            # Look for links with "csv" or "ascii" in the text
             if 'csv' in text or 'ascii' in text or 'download' in text:
-                if 'datasearch' in href or 'objsearch' in href:
+                if href.startswith('/cgi-bin/') or href.startswith('https://ned.ipac.caltech.edu/'):
                     csv_link = href
                     break
         
-        # Method 2: Look for specific NED download patterns
-        if not csv_link:
-            for link in soup.find_all('a', href=True):
-                href = link.get('href', '')
-                if 'of=ascii_bar' in href or 'of=csv' in href:
-                    csv_link = href
-                    break
+        if csv_link is None:
+            raise ValueError("Could not find CSV download link on the NED reference page.")
         
-        # Method 3: Construct the CSV URL directly from the refcode
-        if not csv_link:
-            logger.info("Attempting to construct CSV URL directly...")
-            # Extract refcode from URL
-            refcode = ned_refcode_url.split('/')[-1]
-            # Construct direct CSV download URL
-            csv_link = f'https://ned.ipac.caltech.edu/cgi-bin/objsearch?search_type=InRefcode&refcode={refcode}&of=csv'
+        # Make sure the link is absolute
+        if not csv_link.startswith('http'):
+            csv_link = f'https://ned.ipac.caltech.edu{csv_link}'
         
-        # Make sure we have a full URL
-        if csv_link:
-            if not csv_link.startswith('http'):
-                csv_link = urljoin('https://ned.ipac.caltech.edu', csv_link)
-            
-            logger.info(f"Found CSV download link: {csv_link}")
-            
-            # Step 3: Download the CSV file
-            logger.info("Downloading CSV data...")
-            csv_response = requests.get(csv_link, timeout=60)
-            csv_response.raise_for_status()
-            
-            # Step 4: Save the CSV file
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(csv_response.text)
-            
-            # Verify the file has content
-            file_size = os.path.getsize(output_path)
-            if file_size < 100:  # If file is suspiciously small
-                logger.warning(f"Downloaded file is very small ({file_size} bytes)")
-                logger.warning("This might indicate an error page instead of data")
-            
-            logger.info(f"Successfully downloaded photo-z catalog: {output_filename}")
-            logger.info(f"File size: {file_size / 1024:.2f} KB")
-            
-            return output_path
-        else:
-            raise ValueError("Could not find CSV download link on NED page")
+        logger.info(f"Found CSV download link: {csv_link}")
         
+        # Step 3: Download CSV
+        csv_response = requests.get(csv_link, timeout=60)
+        csv_response.raise_for_status()
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(csv_response.text)
+        
+        # Verify file
+        file_size = os.path.getsize(output_path)
+        if file_size < 100:
+            logger.warning(f"Downloaded file is very small ({file_size} bytes). Check URL.")
+        
+        logger.info(f"Successfully downloaded photo-z catalog: {output_filename} ({file_size/1024:.2f} KB)")
+        return output_path
+    
     except requests.RequestException as e:
-        logger.error(f"Failed to download photo-z catalog from NED: {e}")
-        logger.error("You may need to manually download the CSV from:")
-        logger.error(ned_refcode_url)
-        logger.error(f"And save it as: {output_path}")
+        logger.error(f"Failed to download CSV: {e}")
+        logger.error("Check your internet connection or the NED page URL.")
         raise
     except Exception as e:
-        logger.error(f"Unexpected error downloading photo-z catalog: {e}")
+        logger.error(f"Unexpected error: {e}")
         raise
 
 
