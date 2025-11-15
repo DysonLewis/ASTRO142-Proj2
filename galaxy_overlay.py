@@ -389,15 +389,20 @@ def overlay_galaxies_by_type(ax, wcs, matched_df, photoz_only_df, specz_only_df=
     # Force garbage collection to free memory
     gc.collect()
     
-    # Add legend
+    # Add legend with ALL THREE marker types
     from matplotlib.lines import Line2D
     legend_elements = [
         Line2D([0], [0], marker='o', color='w', markeredgecolor='gray',
-               markeredgewidth=2, markersize=8, label='Spectroscopic z'),
+               markeredgewidth=2, markersize=8, 
+               label='Matched (have both photo-z & spec-z)'),
         Line2D([0], [0], marker='s', color='w', markeredgecolor='gray',
-               markeredgewidth=2, markersize=8, label='Photometric z only')
+               markeredgewidth=2, markersize=8, 
+               label='Photometric z only'),
+        Line2D([0], [0], marker='^', color='w', markeredgecolor='gray',
+               markeredgewidth=2, markersize=8, 
+               label='Spectroscopic z only')
     ]
-    ax.legend(handles=legend_elements, loc='lower right', fontsize=10,
+    ax.legend(handles=legend_elements, loc='lower right', fontsize=9,
              framealpha=0.9)
     
     return cbar
