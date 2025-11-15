@@ -562,7 +562,6 @@ def create_galaxy_overlay_plot(rgb_image, wcs, photoz_path='phot_z.csv',
     )
     
     plt.tight_layout()
-    
     # Save if output file specified
     if output_file:
         script_dir = os.path.dirname(os.path.abspath(__file__))

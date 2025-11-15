@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png',
-         n_galaxies=50, photoz_csv='phot_z.csv', specz_file='Rafelski_UDF_speczlist15.txt'):
+         n_galaxies=100, photoz_csv='phot_z.csv', specz_file='Rafelski_UDF_speczlist15.txt'):
     """
     Main function to run the HUDF analysis pipeline.
     
@@ -56,7 +56,7 @@ def main(download_data=True, data_dir='./data', output_file='hudf_rgb_mosaic.png
     output_file : str, optional
         Output filename for RGB plot (default: 'hudf_rgb_mosaic.png')
     n_galaxies : int, optional
-        Max number of galaxies to overlay from each catalog (default: 50)
+        Max number of galaxies to overlay from each catalog (default: 100)
     photoz_csv : str, optional
         Path to photometric redshift CSV file (default: 'phot_z.csv')
     specz_file : str, optional
@@ -235,7 +235,7 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Download data and create RGB mosaic with 50 galaxies per catalog
+  # Download data and create RGB mosaic with 100 galaxies per catalog
   python project2.py
   
   # Use existing data without downloading
@@ -284,8 +284,8 @@ Output:
     parser.add_argument(
         '--n-galaxies',
         type=int,
-        default=50,
-        help='Max number of galaxies per catalog to overlay (default: 50)'
+        default=100,
+        help='Max number of galaxies per catalog to overlay (default: 100)'
     )
     
     parser.add_argument(
